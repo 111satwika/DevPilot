@@ -1,0 +1,3126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DevPilot AI — Implementation &amp; Approach Log</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #5a5a5a;
+    --border: #ddd;
+    --code-bg: #f5f5f5;
+    --accent: #2b6cb0;
+    --approach-bg: #eef5ff;
+    --approach-border: #b6d4f5;
+    --impl-bg: #f3fbf3;
+    --impl-border: #bfe3bf;
+    --test-bg: #fff8e8;
+    --test-border: #f0dca0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1e1e1e;
+      --fg: #e6e6e6;
+      --muted: #a0a0a0;
+      --border: #3a3a3a;
+      --code-bg: #2a2a2a;
+      --accent: #6fa8dc;
+      --approach-bg: #16324a;
+      --approach-border: #2e5c85;
+      --impl-bg: #163a1c;
+      --impl-border: #2e6b39;
+      --test-bg: #3a3316;
+      --test-border: #7a662e;
+    }
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 5rem;
+    line-height: 1.55;
+  }
+  h1 { font-size: 1.7rem; border-bottom: 2px solid var(--border); padding-bottom: .5rem; }
+  h2 { font-size: 1.25rem; margin-top: 2.5rem; color: var(--accent); }
+  h3 { font-size: 1rem; margin-top: 1.3rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  code, pre {
+    font-family: "SF Mono", Consolas, Menlo, monospace;
+    font-size: .85rem;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: .8rem 1rem;
+    overflow-x: auto;
+  }
+  code { background: var(--code-bg); padding: .1rem .35rem; border-radius: 4px; }
+  pre code { background: none; padding: 0; }
+  .rule-box {
+    background: var(--approach-bg);
+    border: 1px solid var(--approach-border);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    margin: 1.2rem 0 2rem;
+  }
+  .approach, .implementation, .test {
+    border-radius: 8px;
+    padding: .9rem 1.2rem;
+    margin: .8rem 0;
+    border: 1px solid;
+  }
+  .approach { background: var(--approach-bg); border-color: var(--approach-border); }
+  .implementation { background: var(--impl-bg); border-color: var(--impl-border); }
+  .test { background: var(--test-bg); border-color: var(--test-border); }
+  .tag {
+    display: inline-block;
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    padding: .15rem .5rem;
+    border-radius: 4px;
+    margin-bottom: .5rem;
+  }
+  .approach .tag { background: var(--approach-border); color: #06254a; }
+  .implementation .tag { background: var(--impl-border); color: #06340f; }
+  .test .tag { background: var(--test-border); color: #4a3a06; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .9rem; }
+  th, td { border: 1px solid var(--border); padding: .4rem .6rem; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); }
+  .status-open { color: #b06a00; font-weight: 600; }
+  .status-done { color: #2a7a2a; font-weight: 600; }
+  .entry-meta { color: var(--muted); font-size: .85rem; margin-top: -.6rem; margin-bottom: .8rem; }
+  nav.toc { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  footer { margin-top: 3rem; color: var(--muted); font-size: .8rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+</style>
+</head>
+<body>
+
+<h1>DevPilot AI — Implementation &amp; Approach Log</h1>
+<p>Every change to this project, however small, gets an entry here — <strong>before</strong>
+it's built, not after. This is separate from
+<code>DevPilot_AI_Learning_Log.md</code> (concepts + high-level decisions):
+this file is the granular, chronological record of exactly what was proposed
+and exactly what was done.</p>
+
+<div class="rule-box">
+  <strong>Standing rule (added 2026-08-09):</strong> before touching any code,
+  the <em>Approach</em> for that change is written into this file first —
+  what's about to change, why, and what it will/won't do. Only after that is
+  shown does implementation happen. Each entry is then closed out with what
+  was actually implemented and how it was tested.
+</div>
+
+<nav class="toc">
+  <strong>Jump to</strong>
+  <ol>
+    <li><a href="#primer">Plain-language primer (start here if new to MCP)</a></li>
+    <li><a href="#entry-1">SDK API verification</a></li>
+    <li><a href="#entry-2">Project scaffolding</a></li>
+    <li><a href="#entry-3">Filesystem MCP server — <code>read_file</code> tool</a></li>
+    <li><a href="#entry-4">Lesson 1 client (in-memory)</a></li>
+    <li><a href="#entry-5">Testing — happy path &amp; sandbox rejection</a></li>
+    <li><a href="#entry-6">Stage 2 — multiple Filesystem tools</a></li>
+    <li><a href="#entry-7">Stage 3 — Terminal MCP</a></li>
+    <li><a href="#entry-8">Stage 4 — GitHub MCP</a></li>
+    <li><a href="#entry-9">Stage 5 — Browser / Documentation MCP</a></li>
+    <li><a href="#entry-10">Stage 6 — Database MCP</a></li>
+    <li><a href="#entry-11">Stage 7 — Docker MCP (deferred)</a></li>
+    <li><a href="#entry-12">Stage 8 — Approval System</a></li>
+    <li><a href="#entry-13">Stage 9 — Lightweight Planner</a></li>
+    <li><a href="#entry-14">Stage 10 — Memory</a></li>
+    <li><a href="#entry-15">Stage 7 (revisited) — Docker MCP</a></li>
+    <li><a href="#entry-16">Entry 16 — Git MCP (closing the 7th-server gap)</a></li>
+    <li><a href="#entry-17">Entry 17 — First LLM integration (local Ollama, zero cost)</a></li>
+    <li><a href="#entry-18">Entry 18 — Piece 2: Dynamic MCP tool selection</a></li>
+    <li><a href="#entry-19">Entry 19 — Fixing the answer-synthesis gap</a></li>
+    <li><a href="#entry-20">Entry 20 — Piece 3: FastAPI backend</a></li>
+  </ol>
+</nav>
+
+<h2 id="primer">Plain-language primer</h2>
+<p>Written for someone brand new to MCP. Every term below is used in the
+entries further down — read this once, then the entries should read like
+plain engineering notes rather than jargon.</p>
+
+<h3>MCP Server</h3>
+<p>A small program that owns one capability — "talk to the filesystem",
+"talk to the terminal", "talk to GitHub" — and exposes a fixed menu of
+things it can do, called <strong>tools</strong>. It doesn't know or care who's
+calling it or why; it just answers requests. Ours so far is
+<code>mcp_servers/filesystem/server.py</code> — it only knows how to read
+files and directories, nothing else.</p>
+
+<h3>MCP Client</h3>
+<p>The piece of code that connects <em>to</em> a server, asks it "what can
+you do?", and then asks it to actually do one of those things. In a real
+AI assistant, the client sits between the LLM and every server — the LLM
+never talks to a server directly, it always goes through the client. Our
+<code>lesson1_client.py</code> and <code>stage2_client.py</code> are
+stand-ins for that piece, without an LLM wired in yet.</p>
+
+<h3>Tool</h3>
+<p>One specific action a server can perform — <code>read_file</code>,
+<code>list_directory</code>. In code it's just a normal Python function;
+what makes it an "MCP tool" is the <code>@mcp.tool()</code> decorator above
+it, which registers that function so the server can advertise it and the
+client can call it by name instead of by importing the function directly.</p>
+
+<h3>Tool schema</h3>
+<p>A machine-readable description of what arguments a tool needs, generated
+automatically from the function's Python type hints. For
+<code>read_file(path: str)</code> the schema says: one argument, named
+<code>path</code>, must be a string, and it's required. This is the part an
+LLM actually reads to figure out <em>how</em> to call a tool correctly —
+the human-readable description (the docstring) is context, the schema is
+the contract.</p>
+
+<h3>Tool discovery vs. tool invocation</h3>
+<p>Two separate steps, always in this order. <strong>Discovery</strong> is
+the client asking "what tools exist?" (<code>list_tools()</code>) and
+getting back names + descriptions + schemas, with nothing executed yet.
+<strong>Invocation</strong> is the client actually calling one of those
+tools by name with real arguments (<code>call_tool("read_file", {"path": "..."})</code>)
+and getting a result back. Discovery is how an LLM learns its options;
+invocation is it acting on one.</p>
+
+<h3><code>content</code> vs. <code>structured_content</code></h3>
+<p>Every tool call returns both. <code>content</code> is a list of
+display-oriented blocks (mostly <code>TextContent</code>, i.e. plain text) —
+it's what you'd show a human or feed back into an LLM's context.
+<code>structured_content</code> is the tool's actual typed return value,
+still shaped like real data (a list, a dict). They are <strong>not always
+interchangeable</strong> — Entry 6 below hit this directly: a tool
+returning <code>list[str]</code> got split into several separate
+<code>content</code> text blocks (one per item) with the full list only
+available in <code>structured_content</code>, while a tool returning
+<code>dict</code> put everything into one <code>content</code> block as a
+JSON string and left <code>structured_content</code> as <code>None</code>.
+Assuming "the answer is always in <code>content[0].text</code>" is a real,
+easy-to-make bug — it silently truncates list-shaped results instead of
+erroring, which is worse than crashing.</p>
+
+<h3>Sandboxing / workspace root</h3>
+<p>Because a Filesystem MCP server can read (and later write) real files on
+disk, every tool that takes a <code>path</code> argument resolves that path
+and checks it's still inside one fixed folder (<code>WORKSPACE_ROOT</code>)
+before doing anything with it. Without this, a tool call like
+<code>read_file("../../../../etc/passwd")</code> would just work — the
+server has no other reason to refuse it. This check is not optional
+hardening added later; it's load-bearing from the first tool onward.</p>
+
+<h2 id="entry-1">Entry 1 — SDK API verification</h2>
+<div class="entry-meta">2026-08-09 · Stage 1 · Status: <span class="status-done">done</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+  <p>Before writing any MCP server/client code, confirm the current official
+  Python SDK API rather than relying on training-data knowledge, since the
+  SDK is young and moves fast. Specifically need to know: what class creates
+  a server, how a tool is registered, how the server is run, and what the
+  client-side connection API looks like.</p>
+  <p><strong>Won't do:</strong> won't guess at syntax or use an API name
+  (e.g. <code>FastMCP</code>) without checking whether it still exists.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+  <p>Fetched the official <code>modelcontextprotocol/python-sdk</code> repository
+  source directly on GitHub:</p>
+  <ul>
+    <li><code>src/mcp/server/__init__.py</code> → confirmed <code>MCPServer</code> is
+      the exported server class (not <code>FastMCP</code>).</li>
+    <li><code>src/mcp/server/mcpserver/server.py</code> → read the
+      <code>MCPServer.__init__</code>, <code>.tool()</code>, <code>.run()</code>,
+      <code>.run_stdio_async()</code> signatures verbatim.</li>
+    <li><code>src/mcp/__init__.py</code> → confirmed top-level exports include
+      <code>Client</code>, <code>ClientSession</code>, <code>StdioServerParameters</code>,
+      <code>stdio_client</code>.</li>
+  </ul>
+  <pre><code>from mcp.server import MCPServer
+
+mcp = MCPServer("Demo")
+
+@mcp.tool()
+def add(a: int, b: int) -> int:
+    """Add two numbers."""
+    return a + b
+
+mcp.run()  # transport="stdio" by default</code></pre>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+  <p>No test at this stage — this was research, not code. Confirmed two
+  independent fetches of the README returned the same class name
+  (<code>MCPServer</code>), which is why it was trusted.</p>
+</div>
+
+<h2 id="entry-2">Entry 2 — Project scaffolding</h2>
+<div class="entry-meta">2026-08-09 · Stage 1 · Status: <span class="status-done">done</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+  <p>Create the minimum folder/package structure needed for one MCP server
+  and one client to exist as importable Python packages, plus an isolated
+  virtual environment so the <code>mcp</code> package doesn't get installed
+  into the system/global Python.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+  <table>
+    <tr><th>Action</th><th>Detail</th></tr>
+    <tr><td>Created directories</td><td><code>mcp_servers/filesystem/</code>, <code>mcp_client/</code></td></tr>
+    <tr><td>Created empty <code>__init__.py</code></td><td><code>mcp_servers/__init__.py</code>, <code>mcp_servers/filesystem/__init__.py</code>, <code>mcp_client/__init__.py</code> — makes both directories importable Python packages</td></tr>
+    <tr><td>Created <code>requirements.txt</code></td><td>single line: <code>mcp</code> (unpinned deliberately — Stage 1 is exploratory; pinning is a Phase 4/production concern, already logged in the decisions table)</td></tr>
+    <tr><td>Ran</td><td><code>python -m venv .venv</code>, then <code>pip install -r requirements.txt</code> inside it</td></tr>
+  </table>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+  <p><code>pip show mcp</code> confirmed the package installed cleanly into
+  <code>.venv</code> with no errors.</p>
+</div>
+
+<h2 id="entry-3">Entry 3 — Filesystem MCP server: <code>read_file</code> tool</h2>
+<div class="entry-meta">2026-08-09 · Stage 1 · Status: <span class="status-done">done</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+  <p>Build the smallest possible MCP server: one tool, <code>read_file</code>,
+  that reads a text file's contents. Per the standing security decision
+  (logged 2026-08-09 in the learning log), the workspace-root sandbox is
+  built in from this very first tool, not added later — every path is
+  resolved and checked against a fixed <code>WORKSPACE_ROOT</code> before
+  the file is touched.</p>
+  <p><strong>Will do:</strong> read files inside the project folder.<br>
+  <strong>Won't do:</strong> read anything outside the project folder
+  (e.g. <code>../../secrets.txt</code>, absolute paths elsewhere on disk,
+  or symlinks that resolve outside the root) — those raise
+  <code>ValueError</code> instead of returning content.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+  <p>File: <code>mcp_servers/filesystem/server.py</code></p>
+  <pre><code>from pathlib import Path
+from mcp.server import MCPServer
+
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+
+mcp = MCPServer("DevPilot Filesystem")
+
+@mcp.tool()
+def read_file(path: str) -> str:
+    """Read a text file's contents from within the DevPilot workspace."""
+    target = (WORKSPACE_ROOT / path).resolve()
+
+    if target != WORKSPACE_ROOT and WORKSPACE_ROOT not in target.parents:
+        raise ValueError(f"Access denied: '{path}' is outside the workspace root.")
+
+    if not target.is_file():
+        raise FileNotFoundError(f"No such file: '{path}'")
+
+    return target.read_text(encoding="utf-8")
+
+if __name__ == "__main__":
+    mcp.run()</code></pre>
+  <p>Line-by-line reasoning:</p>
+  <ul>
+    <li><code>WORKSPACE_ROOT</code> is computed from the server file's own
+      location (2 parents up), not from the current working directory —
+      so the sandbox boundary doesn't shift depending on where the process
+      is launched from.</li>
+    <li><code>(WORKSPACE_ROOT / path).resolve()</code> collapses any
+      <code>..</code> segments <em>before</em> the check runs — this is what
+      makes the traversal check actually work, rather than comparing
+      against an un-resolved, spoofable path string.</li>
+    <li>The check uses <code>target.parents</code> (all ancestor directories)
+      rather than a string prefix check like
+      <code>str(target).startswith(str(WORKSPACE_ROOT))</code> — a prefix
+      check is a classic sandbox bug, since
+      <code>/workspace-evil</code> starts with the string
+      <code>/workspace</code> but is a sibling directory, not a child.</li>
+  </ul>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+  <p>Verified in Entry 5 below.</p>
+</div>
+
+<h2 id="entry-4">Entry 4 — Lesson 1 client (in-memory)</h2>
+<div class="entry-meta">2026-08-09 · Stage 1 · Status: <span class="status-done">done</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+  <p>Write the smallest client that (a) connects to the server object
+  directly in-process, (b) calls <code>list_tools()</code> to exercise tool
+  discovery, and (c) calls <code>call_tool()</code> to exercise invocation.
+  Deliberately <strong>not</strong> using a real subprocess/stdio connection
+  yet — that's the current official SDK's own recommended "smallest example"
+  shape, and it keeps this first example about Client/Server/Tool/Result,
+  not also about transport mechanics. Real stdio transport
+  (<code>StdioServerParameters</code>, <code>stdio_client</code>,
+  <code>ClientSession</code>) is confirmed to exist (Entry 1) and is
+  deferred to the dedicated MCP Transport lesson.</p>
+  <p><strong>Update from Entry 12 (Stage 8):</strong> that deferral turned
+  out to have a sharper edge than "not yet covering it" — the in-memory
+  shortcut isn't just a simpler version of a real connection, it's missing
+  a capability entirely. It has <strong>no back-channel for server-initiated
+  requests</strong> (confirmed via <code>NoBackChannelError</code>), so
+  anything requiring the server to ask the client something mid-call —
+  elicitation being the concrete case — cannot work over it at all, no
+  matter how it's configured. Every client through Stage 6 happened to only
+  need client→server requests, so this never surfaced; Stage 8 is the first
+  one where it does.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+  <p>File: <code>mcp_client/lesson1_client.py</code></p>
+  <pre><code>import asyncio
+from mcp import Client
+from mcp_servers.filesystem.server import mcp
+
+async def main() -> None:
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+        print("Discovered tools:")
+        for tool in tools.tools:
+            print(f"  - {tool.name}: {tool.description}")
+
+        result = await client.call_tool(
+            "read_file", {"path": "requirements.txt"}
+        )
+        print("\nresult of calling read_file('requirements.txt'):")
+        print(result.content[0].text)
+
+if __name__ == "__main__":
+    asyncio.run(main())</code></pre>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+  <p>Ran via <code>.venv/Scripts/python.exe -m mcp_client.lesson1_client</code>.
+  Output:</p>
+  <pre><code>Discovered tools:
+  - read_file: Read a text file's contents from within the DevPilot workspace.
+
+result of calling read_file('requirements.txt'):
+mcp</code></pre>
+</div>
+
+<h2 id="entry-5">Entry 5 — Testing: happy path &amp; sandbox rejection</h2>
+<div class="entry-meta">2026-08-09 · Stage 1 · Status: <span class="status-done">done</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+  <p>Run the client myself before handing it over, so the user's first test
+  isn't spent debugging an environment problem. Also deliberately probe the
+  sandbox boundary from Entry 3 with a traversal path, since an untested
+  security check is not a verified security check.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+  <p>Ad-hoc script calling <code>read_file</code> with
+  <code>path="../outside.txt"</code> against the same in-memory client
+  pattern from Entry 4.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+  <pre><code>is_error: True
+Error executing tool read_file: Access denied: '../outside.txt' is outside the workspace root.</code></pre>
+  <p>Confirms the <code>WORKSPACE_ROOT</code> check from Entry 3 actually
+  blocks traversal rather than just looking like it would.</p>
+</div>
+
+<h2>Open / Next</h2>
+<table>
+  <tr><th>Item</th><th>Status</th></tr>
+  <tr>
+    <td>Conceptual check question: what did <code>client.list_tools()</code>
+    actually send from client to server, under the hood?</td>
+    <td><span class="status-done">answered inline in chat (2026-08-09) — see Entry 6 for the summary</span></td>
+  </tr>
+</table>
+
+<h2 id="entry-6">Entry 6 — Stage 2: multiple Filesystem tools</h2>
+<div class="entry-meta">2026-08-09 · Stage 2 · Status: <span class="status-done">implemented and tested</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+  <p><strong>Concept being taught:</strong> tool discovery and tool
+  selection when a server exposes <em>more than one</em> tool. In Stage 1
+  <code>list_tools()</code> returned an array with exactly one entry, so
+  "discovery" was trivial. The interesting part of MCP — the LLM reading
+  several schemas and picking the right one for the request — only shows
+  up once there's a choice to make.</p>
+
+  <p><strong>What did the request under the hood, resolved above:</strong>
+  <code>list_tools()</code> sends a single <code>tools/list</code> request;
+  the server returns one <code>Tool</code> entry (name + description +
+  auto-generated JSON-Schema) per <code>@mcp.tool()</code>-decorated
+  function currently registered on it. Adding tools below means that same
+  single request will come back with 4 entries instead of 1 — nothing about
+  the discovery mechanism changes, only what's in the array.</p>
+
+  <p><strong>Planned tools</strong> (per
+  <code># DevPilot AI – MCP Learning &amp; Build Ins.md</code> §6, "Initial tools"),
+  added to the existing <code>mcp_servers/filesystem/server.py</code>:</p>
+  <table>
+    <tr><th>Tool</th><th>Signature</th><th>Behavior</th></tr>
+    <tr><td><code>list_directory</code></td><td><code>(path: str) -&gt; list[str]</code></td><td>Names of entries directly inside <code>path</code>.</td></tr>
+    <tr><td><code>get_file_info</code></td><td><code>(path: str) -&gt; dict</code></td><td>Size, is_dir, last-modified time for one path.</td></tr>
+    <tr><td><code>search_files</code></td><td><code>(query: str) -&gt; list[str]</code></td><td>Recursively find file<em>names</em> containing <code>query</code> (substring match). File-<em>content</em> semantic/keyword search is explicitly out of scope here — that's the "Workspace Search" capability in the project design doc, scheduled for Phase 3, not Stage 2.</td></tr>
+  </table>
+
+  <p><strong>Security carry-over:</strong> all three new tools must go
+  through the same workspace-root boundary check as <code>read_file</code>.
+  Rather than copy-pasting that check four times, the plan is to extract it
+  into one shared helper, <code>_resolve_within_workspace(path) -&gt; Path</code>,
+  that all four tools call — this is a straight duplication removal, not a
+  speculative abstraction (the exact same check would otherwise appear
+  four times in one file).</p>
+
+  <p><strong>Will do:</strong> read-only inspection of files/directories
+  inside the workspace, same as Stage 1.<br>
+  <strong>Won't do:</strong> no write/create/delete tools yet (those are
+  explicitly flagged as needing approval-gating in the build instructions,
+  §6, and that gating mechanism doesn't exist yet) — still read-only for
+  the whole Filesystem MCP server at this stage.</p>
+
+  <p><strong>How this will be tested</strong> once implemented: extend the
+  Stage 1 client to call <code>list_tools()</code> again and print all 4
+  tool names + schemas (proving discovery scales), then call each new tool
+  once on a real path/file in this repo, plus one traversal attempt against
+  <code>search_files</code> to confirm the shared sandbox helper is actually
+  wired into the new tools and not just the old one.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><strong>One deliberate deviation from the approach above:</strong> the
+  original plan wrote <code>search_files(query: str) -&gt; list[str]</code>
+  with no <code>path</code> parameter, searching the whole workspace every
+  time. While implementing it became clear that would leave
+  <code>search_files</code> as the one tool with <em>nothing</em> to sandbox
+  — no path input means no traversal is even possible, which would make the
+  planned traversal test meaningless for this tool. Fixed by giving it an
+  optional <code>path: str = "."</code> parameter to scope the search, which
+  (a) is more realistic anyway — "search under <code>src/</code>" is a
+  normal request — and (b) means all four tools now genuinely share the same
+  sandbox helper, and all four can be traversal-tested the same way. This is
+  exactly the kind of thing the Approach step exists to catch <em>before</em>
+  it's a surprise, but this particular gap only became visible once the code
+  was actually being written — recorded here rather than silently changed.</p>
+
+  <p>File: <code>mcp_servers/filesystem/server.py</code> — added a private
+  helper and three new <code>@mcp.tool()</code>-decorated functions:</p>
+  <pre><code>def _resolve_within_workspace(path: str) -> Path:
+    """Resolve `path` against the workspace root and reject anything outside it."""
+    target = (WORKSPACE_ROOT / path).resolve()
+    if target != WORKSPACE_ROOT and WORKSPACE_ROOT not in target.parents:
+        raise ValueError(f"Access denied: '{path}' is outside the workspace root.")
+    return target
+
+@mcp.tool()
+def list_directory(path: str = ".") -> list[str]:
+    """List the names of entries directly inside a directory in the workspace."""
+    target = _resolve_within_workspace(path)
+    if not target.is_dir():
+        raise NotADirectoryError(f"No such directory: '{path}'")
+    return sorted(entry.name for entry in target.iterdir())
+
+@mcp.tool()
+def get_file_info(path: str) -> dict:
+    """Return size, type, and last-modified time for a path in the workspace."""
+    target = _resolve_within_workspace(path)
+    if not target.exists():
+        raise FileNotFoundError(f"No such path: '{path}'")
+    stat = target.stat()
+    return {
+        "path": path,
+        "is_dir": target.is_dir(),
+        "size_bytes": stat.st_size,
+        "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+    }
+
+@mcp.tool()
+def search_files(query: str, path: str = ".") -> list[str]:
+    """Recursively search a directory in the workspace for filenames containing `query`."""
+    base = _resolve_within_workspace(path)
+    if not base.is_dir():
+        raise NotADirectoryError(f"No such directory: '{path}'")
+    query_lower = query.lower()
+    matches: list[str] = []
+    for entry in base.rglob("*"):
+        if not entry.is_file():
+            continue
+        if any(part in _EXCLUDED_DIR_NAMES for part in entry.relative_to(WORKSPACE_ROOT).parts):
+            continue
+        if query_lower in entry.name.lower():
+            matches.append(str(entry.relative_to(WORKSPACE_ROOT)))
+    return sorted(matches)</code></pre>
+
+  <p>Why <code>read_file</code> itself was also touched: its inline sandbox
+  check (the four lines that used to sit directly inside the function) was
+  replaced with a call to the new <code>_resolve_within_workspace()</code>
+  helper. The behavior is identical — same check, same error message — only
+  <em>where</em> the check lives changed. This matters for the lesson: the
+  four tools are not four independent implementations of "is this path
+  safe", they are four callers of one implementation. If that one
+  implementation ever needs a fix (say, to also reject symlinks that escape
+  the root), it gets fixed in exactly one place and all four tools inherit
+  the fix automatically.</p>
+
+  <p>Also added <code>_EXCLUDED_DIR_NAMES = {".venv", "__pycache__", ".git"}</code>,
+  checked inside <code>search_files</code> only. Without it, searching this
+  repo would recurse into <code>.venv</code> and return hundreds of
+  installed-package files having nothing to do with the project — a
+  usability fix, not a security one (nothing in <code>.venv</code> is
+  outside the sandbox, it's just noise).</p>
+
+  <p>Client: created a new file, <code>mcp_client/stage2_client.py</code>,
+  rather than editing <code>lesson1_client.py</code> — the Stage 1 file is
+  left alone as a clean, already-verified "smallest example" you can go
+  back to, while the new file exercises the full four-tool surface.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>First run failed immediately — worth walking through in full, because
+  both failures are exactly the kind of thing that only shows up once you
+  actually execute code, not while reading it.</p>
+
+  <p><strong>Bug 1 — wrong attribute name.</strong> The test script printed
+  <code>tool.inputSchema</code> (camelCase, matching the name of this field
+  on the wire in MCP's JSON-RPC messages) and got
+  <code>AttributeError: 'Tool' object has no attribute 'inputSchema'. Did you mean: 'input_schema'?</code>.
+  The Python SDK object exposes it as <code>input_schema</code>
+  (snake_case, Python convention) — the wire protocol's field name and the
+  SDK's Python attribute name aren't required to match, and here they don't.
+  One-line fix: <code>tool.inputSchema</code> → <code>tool.input_schema</code>.</p>
+
+  <p><strong>Bug 2 — silently wrong output, not a crash.</strong> This one
+  is more important to understand than Bug 1, because it didn't error at
+  all — it just printed the wrong thing. <code>list_directory('.')</code>
+  should return 8 entries; the script printed exactly one line:</p>
+  <pre><code>list_directory('.'):
+  # DevPilot AI – MCP Learning &amp; Build Ins.md</code></pre>
+  <p>Investigated with a throwaway script that printed the raw
+  <code>result.content</code> list instead of just <code>content[0]</code>.
+  It had <strong>8 separate <code>TextContent</code> blocks</strong>, one
+  per directory entry — the script had only ever been looking at the first
+  one. The full list was sitting the whole time in
+  <code>result.structured_content</code>:
+  <code>{'result': ['# DevPilot AI – MCP Learning &amp; Build Ins.md', '.venv', ...]}</code>.
+  Fix: added a small <code>_print_result()</code> helper that checks
+  <code>structured_content</code> first and only falls back to
+  <code>content[0].text</code> when it's <code>None</code> (see the primer
+  section above for why <code>dict</code>-returning tools leave
+  <code>structured_content</code> as <code>None</code> while
+  <code>list</code>-returning tools populate it — confirmed by direct
+  inspection, not assumed).</p>
+
+  <p><strong>Final run, all green</strong> —
+  <code>.venv/Scripts/python.exe -m mcp_client.stage2_client</code>:</p>
+  <pre><code>Discovered 4 tools:
+  - read_file: Read a text file's contents from within the DevPilot workspace.
+    schema: {'type': 'object', 'properties': {'path': {'title': 'Path', 'type': 'string'}}, 'required': ['path'], 'title': 'read_fileArguments'}
+  - list_directory: List the names of entries directly inside a directory in the workspace.
+    schema: {'type': 'object', 'properties': {'path': {'default': '.', 'title': 'Path', 'type': 'string'}}, 'title': 'list_directoryArguments'}
+  - get_file_info: Return size, type, and last-modified time for a path in the workspace.
+    schema: {'type': 'object', 'properties': {'path': {'title': 'Path', 'type': 'string'}}, 'required': ['path'], 'title': 'get_file_infoArguments'}
+  - search_files: Recursively search a directory in the workspace for filenames containing `query`.
+    schema: {'type': 'object', 'properties': {'query': {'title': 'Query', 'type': 'string'}, 'path': {'default': '.', 'title': 'Path', 'type': 'string'}}, 'required': ['query'], 'title': 'search_filesArguments'}
+
+list_directory('.'):
+  {'result': ['# DevPilot AI – MCP Learning &amp; Build Ins.md', '.venv', 'DevPilot_AI_Implementation_Log.html', 'DevPilot_AI_Learning_Log.md', 'DevPilot_AI_MCP_Project_Design.md', 'mcp_client', 'mcp_servers', 'requirements.txt']}
+
+get_file_info('requirements.txt'):
+  {
+  "path": "requirements.txt",
+  "is_dir": false,
+  "size_bytes": 4,
+  "modified": "2026-08-09T17:29:55.101273+00:00"
+}
+
+search_files(query='server'):
+  {'result': ['mcp_servers\\filesystem\\server.py']}
+
+search_files traversal attempt (path='..'):
+  is_error: True
+  Error executing tool search_files: Access denied: '..' is outside the workspace root.</code></pre>
+
+  <p>What this confirms, concept by concept: discovery scales cleanly from
+  1 tool to 4 with correct per-tool schemas; each tool's own return type
+  (<code>str</code>, <code>list[str]</code>, <code>dict</code>) round-trips
+  correctly through the protocol; and the shared
+  <code>_resolve_within_workspace()</code> helper is genuinely wired into a
+  <em>new</em> tool (<code>search_files</code>), not just the original
+  <code>read_file</code> — the traversal attempt was rejected with the same
+  error shape seen in Entry 5.</p>
+</div>
+
+<h2 id="entry-7">Entry 7 — Stage 3: Terminal MCP</h2>
+<div class="entry-meta">2026-08-10 · Stage 3 · Status: <span class="status-done">implemented and tested</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Concept being taught:</strong> this is the first server where
+  a "wrong" result and a "dangerous" result are different problems that
+  need different handling. Reading a file either works or fails cleanly.
+  Running a command can succeed, fail on purpose (a genuinely failing test
+  suite — <code>exit_code=1</code> is correct, useful information, not a
+  bug), fail by accident (typo, missing dependency), <em>or</em> be something
+  that should never run at all (<code>rm -rf</code>). Stage 3 is about
+  building the machinery to tell those apart: <strong>Tool Permissions</strong>
+  (what's even allowed to run) and <strong>Error Handling</strong>
+  (a non-zero exit code is not an MCP error — it's a normal, successful tool
+  call that happens to report failure).</p>
+
+  <p><strong>Planned tool</strong> — one tool, not two. The build-instructions
+  file's own Terminal MCP section lists <code>execute_command</code> +
+  <code>get_command_output</code> as separate tools, which implies an async
+  pattern: start a command, then poll for its output later. That's the right
+  shape for something like a Docker build that can run for minutes — but
+  we already decided (learning log, Approach &amp; Decisions table) that
+  async/job-queue execution is a Phase 3/4 concern, introduced when Docker
+  MCP actually needs it. Building that machinery now, before anything
+  requires it, would be exactly the "excessive abstraction" the project's
+  own §28 says to avoid. So Stage 3 ships one synchronous tool:</p>
+  <pre><code>execute_command(command: str, args: list[str] | None = None, timeout_seconds: int = 30) -> dict
+    # returns {"stdout": str, "stderr": str, "exit_code": int}</code></pre>
+
+  <p><strong>Security plan</strong> — four independent layers, each closing
+  off a different way this tool could be misused:</p>
+  <table>
+    <tr><th>Layer</th><th>Mechanism</th><th>Closes off</th></tr>
+    <tr><td>Allow-list</td><td>Fixed set of permitted binaries: <code>python</code>, <code>pip</code>, <code>pytest</code>, <code>npm</code>, <code>git</code>. Anything else is rejected before a process is ever spawned.</td><td><code>rm</code>, <code>sudo</code>, arbitrary binaries.</td></tr>
+    <tr><td>No shell</td><td><code>subprocess.run([command, *args], shell=False)</code> — command and each argument passed as a separate list item, never assembled into one shell string.</td><td>Shell metacharacters (<code>;</code>, <code>&amp;&amp;</code>, <code>|</code>, backticks) simply have no special meaning — there's no shell parsing them, so there's nothing to "block". This is a refinement over the original plan (learning log Entry) of pattern-matching to reject dangerous characters — avoiding the shell entirely is simpler and strictly safer than trying to blocklist characters in a string.</td></tr>
+    <tr><td>Fixed working directory</td><td>Every command runs with <code>cwd=WORKSPACE_ROOT</code>, hardcoded — no <code>cwd</code> parameter exposed to the caller at all.</td><td>Same class of problem the Filesystem sandbox solves, applied here by simply not accepting a path input, rather than validating one.</td></tr>
+    <tr><td>Bounded timeout</td><td><code>timeout_seconds</code> param, default 30, hard-capped at 120 server-side regardless of what's requested.</td><td>A hung/runaway process blocking the whole synchronous call indefinitely.</td></tr>
+  </table>
+
+  <p><strong>Explicitly not built yet:</strong> the human-approval workflow
+  ("AI wants to run <code>docker rm ...</code> — Allow / Reject") is its own
+  later stage (Stage 8 in the build-instructions file). It isn't needed yet
+  <em>because</em> the allow-list already prevents anything destructive from
+  running — there's nothing dangerous left to approve. <code>docker</code> is
+  deliberately left off the allow-list too, even though the build-instructions
+  example list includes it — Docker gets its own dedicated MCP server later
+  in the architecture, so letting Terminal MCP also shell out to arbitrary
+  <code>docker</code> subcommands would just be two servers with overlapping,
+  harder-to-reason-about power.</p>
+
+  <p><strong>Will do:</strong> run one allow-listed command with arguments,
+  inside the workspace, with a bounded timeout, and report back exit code +
+  stdout + stderr regardless of whether the command itself succeeded.<br>
+  <strong>Won't do:</strong> run anything not on the allow-list, run with a
+  different working directory, run indefinitely, or ask for human approval
+  (nothing on the allow-list needs it yet).</p>
+
+  <p><strong>How this will be tested</strong> once implemented: (1) a benign
+  allow-listed command (e.g. <code>git --version</code>) to confirm the
+  happy path and that <code>exit_code == 0</code>; (2) a command that runs
+  but is <em>meant</em> to fail (e.g. <code>python -c "import sys; sys.exit(1)"</code>)
+  to prove a non-zero exit code comes back as a normal result, not a thrown
+  error; (3) a disallowed command (e.g. <code>rm</code>) to confirm it's
+  rejected before execution; (4) a deliberately slow command against a short
+  <code>timeout_seconds</code> to confirm the timeout actually fires.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>Files: <code>mcp_servers/terminal/server.py</code> (new server, mirrors
+  the same shape as the Filesystem server — module-level constants,
+  <code>MCPServer("DevPilot Terminal")</code>, one <code>@mcp.tool()</code>
+  function) and <code>mcp_client/stage3_client.py</code> (new test client,
+  following the Stage 2 pattern of a shared <code>_print_result()</code>
+  helper).</p>
+
+  <pre><code>ALLOWED_COMMANDS = {"python", "pip", "pytest", "npm", "git"}
+MAX_TIMEOUT_SECONDS = 120
+
+mcp = MCPServer("DevPilot Terminal")
+
+@mcp.tool()
+def execute_command(
+    command: str, args: list[str] | None = None, timeout_seconds: int = 30
+) -> dict:
+    """Run an allow-listed command inside the workspace and report its result."""
+    if command not in ALLOWED_COMMANDS:
+        raise ValueError(
+            f"Command '{command}' is not allowed. Allowed commands: {sorted(ALLOWED_COMMANDS)}"
+        )
+
+    bounded_timeout = min(timeout_seconds, MAX_TIMEOUT_SECONDS)
+    argv = [command, *(args or [])]
+
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=WORKSPACE_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=bounded_timeout,
+            shell=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(
+            f"Command '{' '.join(argv)}' timed out after {bounded_timeout}s"
+        ) from exc
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"'{command}' is allow-listed but not installed on this system."
+        ) from exc
+
+    return {"stdout": completed.stdout, "stderr": completed.stderr, "exit_code": completed.returncode}</code></pre>
+
+  <p>Line-by-line reasoning for the parts that aren't self-explanatory:</p>
+  <ul>
+    <li>The allow-list check happens <strong>before</strong> anything else —
+    including before <code>bounded_timeout</code> is even computed. A
+    disallowed command never reaches <code>subprocess.run</code> at all;
+    there's no code path where an unapproved binary gets spawned and then
+    stopped partway through.</li>
+    <li><code>bounded_timeout = min(timeout_seconds, MAX_TIMEOUT_SECONDS)</code> —
+    the caller (eventually an LLM) can request a shorter timeout, but can
+    never request a longer one than the server allows, no matter what
+    argument it passes.</li>
+    <li>Two different exceptions map to two different real-world causes that
+    look similar but aren't: <code>subprocess.TimeoutExpired</code> (the
+    process was still running when time ran out — the command itself might
+    be fine, it just took too long) is re-raised as <code>TimeoutError</code>;
+    <code>FileNotFoundError</code> (the binary is allow-listed but genuinely
+    not installed on this machine — e.g. calling <code>npm</code> on a
+    machine without Node) gets a clearer message than Python's default,
+    which would otherwise read like a generic OS error.</li>
+    <li><code>capture_output=True, text=True</code> captures stdout/stderr as
+    decoded strings (not bytes) so they can go straight into the tool's
+    JSON-shaped result without extra decoding.</li>
+  </ul>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Ran <code>.venv/Scripts/python.exe -m mcp_client.stage3_client</code>.
+  All four planned scenarios passed on the first run — no bugs this time,
+  worth noting only because Entry 6 had two. Full output:</p>
+
+  <pre><code>Discovered 1 tools:
+  - execute_command: Run an allow-listed command inside the workspace and report its result.
+    schema: {'type': 'object', 'properties': {'command': {'title': 'Command', 'type': 'string'}, 'args': {'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}], 'default': None, 'title': 'Args'}, 'timeout_seconds': {'default': 30, 'title': 'Timeout Seconds', 'type': 'integer'}}, 'required': ['command'], 'title': 'execute_commandArguments'}
+
+git --version (happy path):
+  {
+  "stdout": "git version 2.55.0.windows.3\n",
+  "stderr": "",
+  "exit_code": 0
+}
+
+python exiting 1 on purpose (should NOT be is_error):
+  {
+  "stdout": "",
+  "stderr": "",
+  "exit_code": 1
+}
+
+rm -rf / (should be rejected, not executed):
+  is_error: True
+  Error executing tool execute_command: Command 'rm' is not allowed. Allowed commands: ['git', 'npm', 'pip', 'pytest', 'python']
+
+sleep 5s with 1s timeout (should time out):
+  is_error: True
+  Error executing tool execute_command: Command 'python -c import time; time.sleep(5)' timed out after 1s</code></pre>
+
+  <p>What each result actually confirms:</p>
+  <ul>
+    <li><strong>Test 2 is the one that matters most conceptually.</strong>
+    <code>exit_code: 1</code> came back as a normal, successful
+    <code>structured_content</code> result — <code>is_error</code> was not
+    set. The tool call succeeded; it's just reporting that the program it
+    ran chose to exit with a failure code. This is the distinction the whole
+    entry was built around: "the command failed" and "the tool call failed"
+    are different facts, and only one of them is an MCP-level error.</li>
+    <li>Test 3 shows the allow-list rejecting <code>rm</code> by name alone,
+    with no attempt to run it — confirmed by there being no partial
+    stdout/stderr in the error, only the rejection message.</li>
+    <li>Test 4 confirms the timeout is real and enforced, not just declared:
+    a 5-second sleep against a 1-second cap actually stopped the process
+    rather than blocking the whole client for 5 seconds.</li>
+    <li>The schema for <code>execute_command</code> shows
+    <code>args</code> as <code>anyOf: [array-of-string, null]</code> —
+    auto-generated directly from the Python type hint
+    <code>list[str] | None = None</code>, the same discovery mechanism from
+    Entry 1, now producing a more complex schema than a single required
+    string.</li>
+  </ul>
+</div>
+
+<h2 id="entry-8">Entry 8 — Stage 4: GitHub MCP</h2>
+<div class="entry-meta">2026-08-10 · Stage 4 · Status: <span class="status-done">implemented and tested</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Concept being taught:</strong> multi-server architecture, for
+  real this time. Filesystem and Terminal both only ever touch <em>this
+  machine</em> — same process boundary, same "is this path/command safe"
+  shape of question. GitHub MCP is the first server that talks to something
+  outside the machine entirely (GitHub's REST API over the network), and
+  that changes what "wrong" looks like: there's no such thing as a network
+  timeout or a 403 rate-limit response when you're just reading a local
+  file. The three servers remain completely independent of each other —
+  GitHub MCP doesn't know Filesystem or Terminal exist — which is the point:
+  the client is the only thing that ever combines what they each know.</p>
+
+  <p><strong>Dependency check performed before planning further:</strong>
+  rather than assume a library name from training data (the mistake to
+  avoid, per Entry 1's lesson), I checked what HTTP client is actually
+  already installed in <code>.venv</code> as a transitive dependency of
+  <code>mcp</code> itself. It's <code>httpx2</code> — not the classic
+  <code>httpx</code> package — confirmed by import (<code>import httpx</code>
+  fails with <code>ModuleNotFoundError</code>; <code>import httpx2</code>
+  works and exposes the same familiar surface:
+  <code>Client</code>, <code>HTTPStatusError</code>, <code>RequestError</code>,
+  etc.). Reusing it avoids adding a second, redundant HTTP dependency to
+  <code>requirements.txt</code>.</p>
+
+  <p><strong>Planned tool</strong> — one tool again, matching Stage 1's
+  "smallest example" shape rather than Stage 2's "many tools" shape, since
+  the concept this time is <em>a new kind of server</em>, not <em>more tools
+  on a server we already understand</em>:</p>
+  <pre><code>get_repository(owner: str, repo: str) -> dict
+    # GET https://api.github.com/repos/{owner}/{repo}
+    # returns a curated subset: name, full_name, description,
+    # default_branch, stargazers_count, open_issues_count, language, html_url</code></pre>
+  <p>Deliberately <strong>curating</strong> the returned fields rather than
+  passing GitHub's raw JSON straight through — the real API response has
+  100+ fields per repository, most irrelevant, and dumping all of it into
+  an LLM's context is wasted tokens and noise it has to filter itself.</p>
+
+  <p><strong>Security / secrets plan:</strong></p>
+  <table>
+    <tr><th>Concern</th><th>Handling</th></tr>
+    <tr><td>Auth token</td><td>Read <em>only</em> from the <code>GITHUB_TOKEN</code> environment variable via <code>os.environ</code>. Never accepted as a tool parameter — an LLM (or anyone prompting it) can never pass a token string through the tool call, because there's no argument for one to go in.</td></tr>
+    <tr><td>Token leakage</td><td>Never included in the tool's return value, under any field name, whether the call succeeds or fails.</td></tr>
+    <tr><td>No token present</td><td>Falls back to an unauthenticated request — works for public repos, just rate-limited to 60/hour by GitHub instead of 5,000/hour. Documented, not silently degraded.</td></tr>
+    <tr><td>Write operations</td><td>None exist. <code>get_repository</code> is read-only, same as every tool so far — write tools (<code>create_branch</code>, etc., listed in the build-instructions file as "later") stay out of scope until the Stage 8 approval workflow exists.</td></tr>
+  </table>
+
+  <p><strong>Error handling plan</strong> — three distinct outcomes, each
+  needs to read differently to whoever/whatever is looking at the result:</p>
+  <ul>
+    <li><strong>404</strong> (repo/owner doesn't exist) → clear
+    <code>ValueError</code>, e.g. <code>"Repository 'owner/repo' not found."</code></li>
+    <li><strong>403</strong> (rate-limited or auth rejected) → clear
+    <code>PermissionError</code> that explicitly suggests setting
+    <code>GITHUB_TOKEN</code> if one isn't already set.</li>
+    <li><strong>timeout / connection failure</strong> → clear
+    <code>ConnectionError</code>, distinct from the above two — a network
+    hiccup is not the same fact as "this repo doesn't exist" and souldn't
+    be reported to the LLM the same way.</li>
+  </ul>
+
+  <p><strong>Will do:</strong> fetch curated public metadata for one named
+  <code>owner/repo</code>, authenticated if <code>GITHUB_TOKEN</code> is set
+  in the environment, with a bounded request timeout.<br>
+  <strong>Won't do:</strong> list files, search code, read commits/PRs (all
+  listed in the build-instructions file, deliberately deferred to a later
+  expansion of this server, same way Filesystem grew from 1 tool to 4), or
+  any write operation.</p>
+
+  <p><strong>How this will be tested</strong> once implemented: (1) a real
+  public repo — <code>modelcontextprotocol/python-sdk</code>, the same repo
+  Entry 1 verified the SDK against — to confirm the happy path and curated
+  fields; (2) a nonexistent owner/repo pair to confirm the 404 case reads
+  clearly; (3) <code>list_tools()</code> to confirm the schema exposes only
+  <code>owner</code> and <code>repo</code> — no token-shaped parameter
+  anywhere in it.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>Files: <code>mcp_servers/github/server.py</code> (new server),
+  <code>mcp_client/stage4_client.py</code> (new test client), and
+  <code>httpx2</code> added explicitly to <code>requirements.txt</code> —
+  it was already installed transitively, but a module this server directly
+  <code>import</code>s belongs in the direct dependency list, not left to
+  ride along on someone else's transitive install.</p>
+
+  <pre><code>GITHUB_API_BASE = "https://api.github.com"
+REQUEST_TIMEOUT_SECONDS = 10
+
+mcp = MCPServer("DevPilot GitHub")
+
+def _auth_headers() -> dict:
+    headers = {"Accept": "application/vnd.github+json"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+@mcp.tool()
+def get_repository(owner: str, repo: str) -> dict:
+    """Fetch curated public metadata for a GitHub repository."""
+    url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}"
+
+    try:
+        with httpx2.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+            response = client.get(url, headers=_auth_headers())
+    except httpx2.RequestError as exc:
+        raise ConnectionError(f"Could not reach GitHub API: {exc}") from exc
+
+    if response.status_code == 404:
+        raise ValueError(f"Repository '{owner}/{repo}' not found.")
+    if response.status_code == 403:
+        raise PermissionError(
+            "GitHub API request forbidden or rate-limited. "
+            "Set the GITHUB_TOKEN environment variable for higher rate limits."
+        )
+    if response.status_code != 200:
+        raise RuntimeError(f"GitHub API returned unexpected status {response.status_code}.")
+
+    data = response.json()
+    return {
+        "name": data["name"], "full_name": data["full_name"],
+        "description": data["description"], "default_branch": data["default_branch"],
+        "stargazers_count": data["stargazers_count"], "open_issues_count": data["open_issues_count"],
+        "language": data["language"], "html_url": data["html_url"],
+    }</code></pre>
+
+  <p>Notes on choices that aren't obvious from the code alone:</p>
+  <ul>
+    <li><code>_auth_headers()</code> is the <em>only</em> place
+    <code>GITHUB_TOKEN</code> is ever read. It builds a headers dict that
+    goes straight into the outgoing HTTP request and is never returned,
+    logged, or otherwise exposed — the token flows from environment
+    variable to HTTP header and nowhere else.</li>
+    <li>Status-code checks happen <strong>before</strong>
+    <code>response.json()</code> is ever called — a 404 or 403 response
+    from GitHub still has a JSON body, but it's GitHub's own error shape,
+    not repository data, so parsing it as if it were a repository would be
+    wrong even if it wouldn't crash.</li>
+    <li>The return dict lists exactly 8 fields, chosen by hand, out of the
+    ~115 fields GitHub's API actually returns for a repository — this is
+    the "curate, don't pass through raw upstream JSON" decision from the
+    Approach, made concrete.</li>
+  </ul>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Ran <code>.venv/Scripts/python.exe -m mcp_client.stage4_client</code>
+  against the real GitHub API (no <code>GITHUB_TOKEN</code> set in this
+  environment — unauthenticated path). Both planned scenarios passed on the
+  first run:</p>
+
+  <pre><code>Discovered 1 tools:
+  - get_repository: Fetch curated public metadata for a GitHub repository.
+    schema: {'type': 'object', 'properties': {'owner': {'title': 'Owner', 'type': 'string'}, 'repo': {'title': 'Repo', 'type': 'string'}}, 'required': ['owner', 'repo'], 'title': 'get_repositoryArguments'}
+
+get_repository(modelcontextprotocol/python-sdk) — happy path:
+  {
+  "name": "python-sdk",
+  "full_name": "modelcontextprotocol/python-sdk",
+  "description": "The official Python SDK for Model Context Protocol servers and clients",
+  "default_branch": "main",
+  "stargazers_count": 23958,
+  "open_issues_count": 528,
+  "language": "Python",
+  "html_url": "https://github.com/modelcontextprotocol/python-sdk"
+}
+
+get_repository (nonexistent repo, expect 404 -> ValueError):
+  is_error: True
+  Error executing tool get_repository: Repository 'this-owner-does-not-exist-xyz123/nope' not found.</code></pre>
+
+  <p>What this confirms: the schema check (test 3 from the plan) passed
+  implicitly — <code>list_tools()</code> shows exactly <code>owner</code>
+  and <code>repo</code> as parameters, both required, nothing
+  token-shaped anywhere in it, which is the whole point of reading the
+  token from the environment instead of accepting it as an argument. The
+  404 case came back as a clean, single-sentence <code>ValueError</code>
+  rather than a raw HTTP error or a stack trace. One incidental observation:
+  <code>httpx2</code> prints its own <code>HTTP Request: GET ... "HTTP/1.1 200 OK"</code>
+  line for every call — that's the library's own request logging, not
+  something this code added, and it's a preview of why Entry 3's
+  "Reliability &amp; Observability" concerns (structured logging, not
+  print-based) will matter once there are several servers all logging in
+  their own format.</p>
+</div>
+
+<h2 id="entry-9">Entry 9 — Stage 5: Browser / Documentation MCP</h2>
+<div class="entry-meta">2026-08-10 · Stage 5 · Status: <span class="status-done">implemented and tested</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Concept being taught:</strong> external knowledge retrieval —
+  giving the LLM a way to ground an answer in real, current documentation
+  instead of only what it already knows. This is deliberately kept separate
+  from full RAG (chunking, embeddings, a vector DB, a reranker) — per the
+  build-instructions file §21, RAG is explicitly a later, optional addition;
+  Stage 5 is "search the web, fetch a page, read its text," nothing more.</p>
+
+  <p><strong>Verification performed before planning further</strong> (same
+  discipline as Entry 1 and Entry 8): rather than guess at what a scraped
+  search results page looks like, I fetched a real DuckDuckGo HTML search
+  page directly (<code>https://html.duckduckgo.com/html/?q=...</code>, no
+  API key, no login) and inspected the raw markup. Confirmed structure:
+  each result is <code>&lt;a class="result__a" href="//duckduckgo.com/l/?uddg=&lt;url-encoded-target&gt;&amp;rut=..."&gt;Title&lt;/a&gt;</code>
+  followed by <code>&lt;a class="result__snippet"&gt;snippet text&lt;/a&gt;</code>.
+  Two things this reveals that a guess likely would've missed: the real
+  target URL isn't in a plain <code>href</code> — it's inside DuckDuckGo's
+  own redirect link, URL-encoded in a <code>uddg</code> query parameter, and
+  has to be extracted and decoded; and the snippet text contains inline
+  <code>&lt;b&gt;</code> tags around matched search terms that need stripping.</p>
+
+  <p><strong>Planned tools</strong> — two, not the three
+  (<code>search_web</code>, <code>open_page</code>, <code>extract_content</code>)
+  listed in the build-instructions file. <code>open_page</code> and
+  <code>extract_content</code> are collapsed into one tool,
+  <code>fetch_page</code>, for the same reason Stage 3 collapsed
+  <code>execute_command</code>/<code>get_command_output</code> into one:
+  there's no async/long-running reason to fetch raw HTML as one step and
+  parse it as a separate step when nothing else needs the raw HTML in
+  between.</p>
+  <pre><code>search_web(query: str, max_results: int = 5) -> list[dict]
+    # [{"title": str, "url": str, "snippet": str}, ...] via DuckDuckGo HTML endpoint
+
+fetch_page(url: str) -> str
+    # fetches `url`, strips tags/script/style, returns readable text (capped length)</code></pre>
+
+  <p><strong>Security plan — the new concern here is SSRF, not sandboxing.</strong>
+  Filesystem/Terminal each had one clear boundary (workspace root, allow-list).
+  <code>fetch_page</code> is different: fetching arbitrary external URLs
+  <em>is the point</em>, so there's no workspace-style boundary to apply.
+  The real risk is a tool that fetches "any URL" being pointed at something
+  that isn't really documentation — <code>http://localhost/admin</code>,
+  <code>http://169.254.169.254/</code> (the cloud metadata endpoint many SSRF
+  exploits target), or an internal <code>10.x</code>/<code>192.168.x</code>
+  address. Plan: reject before fetching if the URL's scheme isn't
+  <code>http</code>/<code>https</code>, or if the resolved host is
+  <code>localhost</code>, a loopback address, or a private/link-local IP
+  range. This is a real production concern (flagged generically in
+  <code>DevPilot_AI_MCP_Project_Design.md</code>'s security section) made
+  concrete for the first time, the same way Stage 1 made "sandboxing" concrete
+  for Filesystem.</p>
+
+  <p><strong>Other bounds:</strong> request timeout (10s, matching GitHub
+  MCP's pattern) and a hard cap on returned text length (~5,000 characters)
+  so one large page can't flood the LLM's context — truncated with a note,
+  not silently cut.</p>
+
+  <p><strong>Being upfront about a real limitation:</strong>
+  <code>search_web</code> scrapes a public HTML page with no official API
+  contract — unlike GitHub MCP's REST API, DuckDuckGo can change this markup
+  at any time with no notice or versioning, which would silently break
+  parsing. This is a deliberate, documented trade-off for a zero-cost,
+  no-API-key learning project, not a production choice — a real deployment
+  would swap this for a paid search API (Brave Search, Bing) behind the
+  exact same <code>search_web(query) -&gt; list[dict]</code> signature. The
+  tool's interface is designed to survive that swap even though today's
+  implementation is a stopgap.</p>
+
+  <p><strong>Will do:</strong> search the web with no API key, fetch a given
+  URL's readable text, both with bounded time/size, reject obviously-internal
+  fetch targets.<br>
+  <strong>Won't do:</strong> JavaScript-rendered pages (no headless browser —
+  plain HTTP GET + HTML parsing only), search result ranking/filtering
+  beyond what DuckDuckGo already returns, or full RAG (chunking/embeddings)
+  yet.</p>
+
+  <p><strong>How this will be tested</strong> once implemented: (1)
+  <code>search_web("python requests timeout")</code> — real query, confirm
+  real titles/URLs/snippets come back, decoded correctly, no leftover
+  <code>&lt;b&gt;</code> tags; (2) <code>fetch_page</code> on one of those
+  real result URLs, confirm readable text comes back; (3)
+  <code>fetch_page("http://localhost/")</code> (and a private-IP variant) to
+  confirm the SSRF guard rejects them before any request is made; (4)
+  <code>list_tools()</code> to confirm both schemas.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>Files: <code>mcp_servers/browser/server.py</code> (new server, two
+  tools), <code>mcp_client/stage5_client.py</code> (new test client). No new
+  dependencies — <code>httpx2</code> (Entry 8) covers the HTTP calls, and
+  everything else (<code>html.parser.HTMLParser</code>, <code>socket</code>,
+  <code>ipaddress</code>, <code>urllib.parse</code>) is Python's standard
+  library.</p>
+
+  <p><code>_ResultParser</code> is a small <code>HTMLParser</code> subclass
+  driven by the real markup confirmed in the Approach: it watches for
+  <code>&lt;a class="result__a"&gt;</code> (captures the title text and the
+  raw <code>href</code>) and <code>&lt;a class="result__snippet"&gt;</code>
+  (captures the snippet text, with any inline <code>&lt;b&gt;</code> tags
+  around matched terms silently dropped — <code>handle_data()</code> only
+  ever sees text nodes, never the tags around them). The real URL is pulled
+  out of the DuckDuckGo redirect link by <code>_extract_real_url()</code>:</p>
+  <pre><code>def _extract_real_url(redirect_href: str | None) -> str:
+    """DuckDuckGo's result links wrap the real URL in a `uddg` query param."""
+    if not redirect_href:
+        return ""
+    absolute = redirect_href if redirect_href.startswith("http") else f"https:{redirect_href}"
+    query = parse_qs(urlparse(absolute).query)
+    return unquote(query.get("uddg", [""])[0])</code></pre>
+  <p>The <code>if redirect_href.startswith("http") else f"https:{redirect_href}"</code>
+  line exists because the real markup has protocol-relative links
+  (<code>//duckduckgo.com/l/?uddg=...</code>, no scheme) — <code>urlparse</code>
+  can't extract query params correctly from a schemeless URL, so a scheme
+  is prepended first, purely so parsing works; it's discarded immediately
+  after.</p>
+
+  <p><code>_reject_unsafe_url()</code> is the SSRF guard, called as the very
+  first line of <code>fetch_page</code> — before any network request:</p>
+  <pre><code>def _reject_unsafe_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Refusing to fetch '{url}': only http/https URLs are allowed.")
+    hostname = (parsed.hostname or "").lower()
+    if hostname in ("localhost",):
+        raise ValueError(f"Refusing to fetch '{url}': internal host is not allowed.")
+    resolved_ip = socket.gethostbyname(hostname)
+    ip = ipaddress.ip_address(resolved_ip)
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+        raise ValueError(f"Refusing to fetch '{url}': resolves to a private/internal address ({resolved_ip}).")</code></pre>
+  <p><code>localhost</code> is checked by name explicitly, separately from
+  the IP check, because it's a hostname, not an IP literal — the IP check
+  only runs after DNS resolution, so <code>localhost</code> needs its own
+  early rejection rather than relying on it resolving to
+  <code>127.0.0.1</code> (which it usually does, but "usually" isn't a
+  security boundary).</p>
+
+  <p><strong>Known limitation, noted rather than solved:</strong> the
+  hostname is resolved once for the safety check, and then
+  <code>httpx2</code> resolves it <em>again</em> when it actually connects.
+  A DNS response could theoretically differ between those two lookups (DNS
+  rebinding) — a fully hardened version would resolve once and connect to
+  that pinned IP directly. Not fixed here; this is a Stage 5 learning
+  example, not a hardened production tool, and the gap is written down
+  rather than silently left implicit.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Ran <code>.venv/Scripts/python.exe -m mcp_client.stage5_client</code>
+  against the real DuckDuckGo endpoint and a real documentation page. All
+  four scenarios passed on the first run:</p>
+
+  <pre><code>Discovered 2 tools:
+  - search_web: Search the web via DuckDuckGo's HTML endpoint (no API key required).
+  - fetch_page: Fetch a URL and return its readable text content, capped in length.
+
+search_web('python requests timeout') -> 3 results, e.g.:
+  {"title": "Advanced Usage — Requests 2.34.2 documentation - docs.python-requests.org",
+   "url": "https://docs.python-requests.org/en/latest/user/advanced/",
+   "snippet": "The connect timeout is the number of seconds Requests will wait..."}
+
+fetch_page('https://docs.python-requests.org/en/latest/user/advanced/'):
+  "Advanced Usage — Requests 2.34.2 documentation Advanced Usage — This document
+   covers some of Requests more advanced features. Session Objects — ... [truncated]"
+
+fetch_page('http://localhost/') — should be rejected:
+  is_error: True
+  Error executing tool fetch_page: Refusing to fetch 'http://localhost/': internal host is not allowed.
+
+fetch_page('http://169.254.169.254/') — cloud metadata IP, should be rejected:
+  is_error: True
+  Error executing tool fetch_page: Refusing to fetch 'http://169.254.169.254/': resolves to a private/internal address (169.254.169.254).</code></pre>
+
+  <p>What this confirms: the parser built from real, verified markup worked
+  against a live page on the first try — no <code>&lt;b&gt;</code> tag
+  leakage in snippets, real target URLs correctly unwrapped from DuckDuckGo's
+  redirect links; <code>fetch_page</code> chained directly off a
+  <code>search_web</code> result (a real two-tool chain — search, then read
+  what it found) and returned clean, tag-free text, capped and marked
+  <code>[truncated]</code> rather than silently cut; and the SSRF guard
+  caught both a hostname-based internal target (<code>localhost</code>) and
+  an IP-based one (the cloud metadata address), confirming it isn't only
+  checking one of the two representations.</p>
+</div>
+
+<h2 id="entry-10">Entry 10 — Stage 6: Database MCP</h2>
+<div class="entry-meta">2026-08-10 · Stage 6 · Status: <span class="status-done">implemented and tested</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Concept being taught:</strong> structured data tools —
+  querying something with an actual schema (tables, columns, types) rather
+  than free text (files) or an external HTTP contract (GitHub/Browser). It
+  also reinforces a security insight from Stage 3 in a new domain: prefer a
+  mechanism that makes the dangerous thing structurally impossible over a
+  mechanism that tries to pattern-match and block it.</p>
+
+  <p><strong>Environment check performed before planning further</strong>
+  (same discipline as Entries 1, 8, 9): checked whether PostgreSQL — what
+  the build-instructions file specifies — is actually available here.
+  Neither <code>psql</code> nor anything listening on <code>localhost:5432</code>
+  was found. Rather than write Postgres-targeting code that's never actually
+  run (breaking the "every stage gets really tested" pattern every prior
+  entry has followed), this was raised with the user directly. Decision:
+  <strong>use SQLite for now</strong>, explicitly logged as a deviation from
+  the build-instructions file, not a silent substitution.</p>
+
+  <p><strong>Keeping the door open for Postgres later:</strong> the tool
+  <em>signatures</em> below are written to be engine-agnostic — a table
+  name in, a list of dicts out — so a future swap to PostgreSQL (via
+  <code>psycopg</code>) only touches the connection/query-execution layer
+  inside the server, not the tools themselves or anything calling them.
+  Same pattern as Stage 5's DuckDuckGo-scrape-now / real-search-API-later
+  decision.</p>
+
+  <p><strong>Planned tools</strong> — three, not the four
+  (<code>list_databases</code>, <code>list_tables</code>,
+  <code>describe_table</code>, <code>execute_read_query</code>) in the
+  build-instructions file. <code>list_databases</code> is dropped: it's a
+  distinctly Postgres/server concept (one Postgres <em>server</em> hosts
+  several databases); a SQLite connection already points at exactly one
+  database file, so "list the databases" has no meaningful answer. This
+  isn't scope-cutting so much as the concept not existing in this engine.</p>
+  <pre><code>list_tables() -> list[str]
+describe_table(table: str) -> list[dict]   # [{"name", "type", "nullable", "primary_key"}, ...]
+execute_read_query(query: str) -> list[dict]   # one dict per row, capped at 500 rows</code></pre>
+
+  <p><strong>Demo data:</strong> rather than an arbitrary "users/orders"
+  toy schema, the seed database tracks <em>this project's own progress</em>
+  — a <code>stages</code> table with one row per Stage 1–5 (name, status,
+  date completed), auto-created on first run if the file doesn't exist yet.
+  Meaningful data DevPilot's own Database MCP can be asked real questions
+  about ("which stages are done?"), instead of disconnected sample rows.</p>
+
+  <p><strong>Security plan — mechanism over pattern-matching, same insight as
+  Stage 3, applied to SQL instead of shell commands:</strong></p>
+  <table>
+    <tr><th>Layer</th><th>Mechanism</th></tr>
+    <tr><td>Statement-shape check</td><td>Query text must start with <code>SELECT</code> or <code>WITH</code> (case-insensitive) — a fast, clear rejection for the common case of an obviously-non-read query, with a helpful error message rather than a raw SQLite error.</td></tr>
+    <tr><td>Structural backstop</td><td>The connection itself is opened read-only via SQLite's URI mode — <code>sqlite3.connect("file:...?mode=ro", uri=True)</code>. Any write attempt fails at the database engine level, the same way Stage 3's <code>shell=False</code> made shell-metacharacter injection structurally impossible rather than something to blocklist. This is the layer that actually matters — the statement-shape check above is a nicer error message, not the real defense.</td></tr>
+    <tr><td>Result size cap</td><td>Results capped at 500 rows, same "don't flood the LLM's context" reasoning as Browser MCP's 5,000-character cap.</td></tr>
+  </table>
+  <p><strong>Known limitation, noted rather than solved</strong> (same
+  honesty as Stage 5's DNS-rebinding note): there's no per-query execution
+  timeout. SQLite's <code>timeout</code> parameter only bounds how long a
+  connection waits for a lock, not how long a complex query itself can run
+  — a deliberately expensive read (e.g. a large recursive CTE) could still
+  block the call. Not solved here; would need a separate thread calling
+  <code>connection.interrupt()</code> after a deadline, which is more
+  machinery than this stage's scope justifies.</p>
+
+  <p><strong>Will do:</strong> list tables, describe a table's columns, run
+  a read-only query against the demo database, capped in size.<br>
+  <strong>Won't do:</strong> any <code>INSERT</code>/<code>UPDATE</code>/
+  <code>DELETE</code>/<code>DROP</code>/<code>ALTER</code> — write support
+  is explicitly "later" per the build-instructions file, and stays out of
+  scope until the Stage 8 approval workflow exists, same as every other
+  server so far.</p>
+
+  <p><strong>How this will be tested</strong> once implemented: (1)
+  <code>list_tables()</code> against the freshly-seeded demo database; (2)
+  <code>describe_table("stages")</code> to confirm column metadata; (3) a
+  real <code>SELECT</code> query (e.g. "which stages are done") to confirm
+  rows come back as clean dicts; (4) an <code>INSERT</code> attempt to
+  confirm it's rejected — once by the statement-shape check, and separately
+  a direct test of the read-only connection itself to confirm the structural
+  backstop actually works, not just the string check in front of it.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>Files: <code>mcp_servers/database/server.py</code> (new server, seeds
+  <code>devpilot_demo.db</code> on first run if missing),
+  <code>mcp_client/stage6_client.py</code> (new test client). No new
+  dependencies — <code>sqlite3</code> is Python standard library.</p>
+
+  <pre><code>def _readonly_connection() -> sqlite3.Connection:
+    """The real defense: a connection that structurally cannot write."""
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=5)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+@mcp.tool()
+def execute_read_query(query: str) -> list[dict]:
+    """Run a read-only SQL query against the demo database, capped at 500 rows."""
+    stripped = query.strip().lower()
+    if not stripped.startswith(_READ_PREFIXES):
+        raise ValueError(
+            "Only SELECT/WITH queries are allowed. "
+            f"Got a statement starting with: '{query.strip()[:20]}'"
+        )
+    conn = _readonly_connection()
+    try:
+        cursor = conn.execute(query)
+        rows = cursor.fetchmany(MAX_ROWS)
+        return [dict(row) for row in rows]
+    except sqlite3.OperationalError as exc:
+        raise ValueError(f"Query failed: {exc}") from exc
+    finally:
+        conn.close()</code></pre>
+
+  <p>One detail worth calling out in <code>describe_table</code>: it
+  interpolates the table name directly into a <code>PRAGMA table_info(...)</code>
+  string, which would normally be a textbook SQL-injection shape. It's safe
+  here specifically because <code>table</code> is checked against
+  <code>_existing_tables(conn)</code> — the real list of tables from
+  <code>sqlite_master</code> — <em>before</em> the interpolation happens.
+  <code>PRAGMA</code> statements don't support SQLite's normal
+  <code>?</code> parameter binding for identifiers (only for values), so
+  "validate against a known-good set, then interpolate" is the correct
+  pattern here, not an oversight — parameter binding literally isn't an
+  option for this particular statement.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Ran <code>.venv/Scripts/python.exe -m mcp_client.stage6_client</code>.
+  All 4 planned scenarios passed on the first run:</p>
+
+  <pre><code>Discovered 3 tools: list_tables, describe_table, execute_read_query
+
+list_tables():
+  {'result': ['stages']}
+
+describe_table('stages'):
+  {'result': [{'name': 'id', 'type': 'INTEGER', 'nullable': True, 'primary_key': True},
+              {'name': 'stage_number', ...}, {'name': 'name', ...},
+              {'name': 'status', ...}, {'name': 'date_completed', ...}]}
+
+execute_read_query(... WHERE status = 'done'):
+  {'result': [{'stage_number': 1, 'name': 'MCP Fundamentals (Filesystem MCP)', 'status': 'done'},
+              {'stage_number': 2, 'name': 'Multiple Tools (Filesystem MCP)', 'status': 'done'},
+              {'stage_number': 3, 'name': 'Terminal MCP', 'status': 'done'},
+              {'stage_number': 4, 'name': 'GitHub MCP', 'status': 'done'},
+              {'stage_number': 5, 'name': 'Browser / Documentation MCP', 'status': 'done'}]}
+
+execute_read_query(INSERT ...) — should be rejected by prefix check:
+  is_error: True
+  Error executing tool execute_read_query: Only SELECT/WITH queries are allowed.
+  Got a statement starting with: 'INSERT INTO stages ('</code></pre>
+
+  <p>Then the fifth, independent test the plan called for: bypassing the
+  tool entirely and attempting a raw write directly against
+  <code>_readonly_connection()</code>'s connection mode, to prove the
+  structural backstop — not just the prefix check in front of it — is what
+  actually stops a write:</p>
+  <pre><code>conn = sqlite3.connect(f'file:{DB_PATH}?mode=ro', uri=True)
+conn.execute("INSERT INTO stages (stage_number, name, status) VALUES (99, 'bypass', 'done')")
+# -&gt; sqlite3.OperationalError: attempt to write a readonly database</code></pre>
+  <p>Blocked at the SQLite engine level, exactly as designed — with no tool
+  code, no prefix check, and no Python-level validation involved at all.
+  This is the confirmation that matters: even a caller that fully bypasses
+  <code>execute_read_query</code>'s own guard still cannot write, because
+  the write is impossible at the connection layer, not merely disallowed by
+  a check that a differently-shaped query could slip past.</p>
+</div>
+
+<h2 id="entry-11">Entry 11 — Stage 7: Docker MCP (deferred)</h2>
+<div class="entry-meta">2026-08-10 · Stage 7 · Status: <span class="status-open">deferred — not implemented</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+  <p><strong>Environment check performed before planning further</strong>
+  (same discipline as Entries 1, 8, 9, 10): checked for the <code>docker</code>
+  CLI on <code>PATH</code>. Not found — this environment has no Docker
+  installed at all, not merely a stopped daemon. Unlike Stage 6's Postgres
+  gap (where swapping to SQLite kept the stage fully testable), there's no
+  equivalent lightweight stand-in for "container runtime" that would still
+  exercise the real concept — a fake Docker MCP would just be theatre.</p>
+  <p><strong>Decision (user-confirmed):</strong> skip Stage 7 for now rather
+  than write untested code against it. Revisit once Docker is actually
+  reachable from wherever DevPilot's servers run — no urgency to force it,
+  since Docker MCP's distinguishing concerns (long-running builds needing a
+  job queue, the highest-privilege server in the whole architecture needing
+  the strongest sandboxing) don't disappear by waiting; they just aren't
+  <em>testable</em> right now.</p>
+  <p>Proceeding to Stage 8 (Approval System) instead — it doesn't depend on
+  Docker and, notably, every write-capable tool across all 6 servers built
+  so far has been deliberately deferred with some variant of "until the
+  approval workflow exists." Stage 8 is what finally cashes that out.</p>
+</div>
+
+<h2 id="entry-12">Entry 12 — Stage 8: Approval System</h2>
+<div class="entry-meta">2026-08-10 · Stage 8 · Status: <span class="status-done">implemented and tested — the most eventful stage so far</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Concept being taught:</strong> human-in-the-loop — a tool
+  pausing <em>mid-execution</em> to ask the connected human a question, then
+  resuming based on the answer. This is a different shape of safety
+  mechanism from everything built so far. Every prior gate (sandboxing,
+  allow-listing, SSRF checks, read-only connections) is the
+  <strong>server deciding autonomously</strong>, before or during a call,
+  with no human involved. Approval is the first mechanism where the
+  <strong>human is the gate</strong> — the server can't decide by itself at
+  all, it has to stop and ask.</p>
+
+  <p><strong>Verification performed before planning further</strong> (same
+  discipline as every stage so far, but deeper this time — this turned out
+  to be the least-obvious API surface encountered yet). MCP has a
+  <em>native</em> protocol feature for exactly this, called
+  <strong>elicitation</strong> — not something to hand-roll with a custom
+  approval queue. Traced the real implementation across four files in the
+  SDK source (not guessed):</p>
+  <ul>
+    <li>A tool function can declare a parameter type-hinted
+    <code>ctx: Context</code>; the SDK auto-injects the current request's
+    <code>Context</code> object into it at call time, and — importantly —
+    this parameter is <strong>excluded from the tool's public JSON
+    schema</strong>. Confirmed in <code>tools/base.py</code>:
+    <code>find_context_parameter(fn)</code> detects it, then
+    <code>pass_directly[self.context_kwarg] = context</code> supplies it
+    outside the normal validated-arguments path.</li>
+    <li>Inside the tool, <code>await ctx.elicit(message: str, schema: type[BaseModel]) -&gt; ElicitationResult</code>
+    sends the elicitation request. Confirmed signature in
+    <code>context.py</code>.</li>
+    <li><code>ElicitationResult</code> isn't one class with an
+    <code>action</code> string to compare — it's a union of three real
+    types, confirmed in <code>mcp/server/elicitation.py</code>:
+    <pre><code>class AcceptedElicitation(BaseModel, Generic[T]):
+    action: Literal["accept"] = "accept"
+    data: T                          # only present when accepted
+
+class DeclinedElicitation(BaseModel):
+    action: Literal["decline"] = "decline"
+
+class CancelledElicitation(BaseModel):
+    action: Literal["cancel"] = "cancel"</code></pre>
+    The documented usage pattern is <code>isinstance(outcome, AcceptedElicitation)</code>,
+    not string comparison on <code>.action</code>.</li>
+    <li><strong>Critical finding for testing:</strong> the client side must
+    supply an <code>elicitation_callback</code> matching a specific
+    <code>Protocol</code> (confirmed in <code>client/session.py</code>).
+    Without one, the SDK's own default handler runs:
+    <pre><code>async def _default_elicitation_callback(context, params):
+    return types.ErrorData(code=types.INVALID_REQUEST, message="Elicitation not supported")</code></pre>
+    This means every prior test client (<code>lesson1_client.py</code>
+    through <code>stage6_client.py</code>) would make <code>write_file</code>
+    fail-safe by default — approval is opt-in on the tool side but the
+    <em>absence</em> of a callback doesn't silently allow anything, it
+    silently <em>refuses</em> everything. That fail-safe default is worth
+    testing directly, not just asserted.</li>
+  </ul>
+  <p><strong>Not yet verified, deferred to implementation time:</strong> the
+  exact field names on <code>types.ElicitResult</code> / <code>types.ElicitRequestParams</code>
+  that a custom callback needs to construct/read — the source file wasn't
+  reachable at the path tried. This will be confirmed empirically while
+  writing the callback (same "verify against the real error, not a guess"
+  approach that caught the two real bugs in Entry 6), rather than blocking
+  the whole plan on one more fetch.</p>
+
+  <p><strong>What gets gated:</strong> a new tool, <code>write_file(path, content)</code>,
+  added to the existing Filesystem MCP server — the natural first candidate,
+  since the build-instructions file has said since §6 that file-modification
+  tools "must require explicit user approval," and every write-capable
+  operation across all 6 servers so far has explicitly deferred to
+  "whenever Stage 8 exists." This is that moment, for exactly one tool —
+  proving the mechanism end-to-end matters more than rolling it out
+  everywhere at once.</p>
+  <pre><code>class WriteApproval(BaseModel):
+    pass  # no extra data needed -- the accept/decline/cancel action IS the answer
+
+@mcp.tool()
+async def write_file(path: str, content: str, ctx: Context) -> str:
+    target = _resolve_within_workspace(path)   # existing Stage 1/2 sandbox check, unchanged
+
+    outcome = await ctx.elicit(
+        message=f"DevPilot wants to write {len(content)} characters to '{path}'. Approve?",
+        schema=WriteApproval,
+    )
+    if not isinstance(outcome, AcceptedElicitation):
+        raise PermissionError(f"Write to '{path}' was not approved (action={outcome.action}).")
+
+    target.write_text(content, encoding="utf-8")
+    return f"Wrote {len(content)} characters to '{path}'."</code></pre>
+  <p>Two things worth flagging about this specific design: the existing
+  workspace-root sandbox check still runs <strong>first</strong>, before the
+  human is ever asked anything — there's no reason to interrupt a human to
+  approve a write that was going to be rejected anyway. And this is the
+  first <code>async def</code> tool in the codebase (every prior tool has
+  been a plain synchronous function) — required because <code>ctx.elicit()</code>
+  is itself an <code>await</code>-able call.</p>
+
+  <p><strong>Will do:</strong> gate exactly one destructive operation
+  (<code>write_file</code>) behind real human approval via MCP's native
+  elicitation mechanism, layered on top of the existing sandbox check, not
+  replacing it.<br>
+  <strong>Won't do:</strong> extend approval to other servers' hypothetical
+  write operations yet (Terminal already refuses via allow-list rather than
+  needing approval; GitHub/Browser/Database remain fully read-only) — one
+  gated tool, proven end-to-end, is the right scope for this stage.</p>
+
+  <p><strong>How this will be tested</strong> once implemented, using a
+  custom <code>elicitation_callback</code> in the test client that can be
+  scripted per call: (1) approve path — callback accepts, confirm the file
+  is actually written with the right content; (2) decline path — callback
+  declines, confirm a clean <code>PermissionError</code> and that the file
+  was <strong>not</strong> created or modified; (3) fail-safe path — call
+  <code>write_file</code> through a client with <em>no</em>
+  <code>elicitation_callback</code> registered at all, confirm it refuses
+  by default rather than silently writing; (4) confirm the sandbox still
+  runs first — a <code>../</code> traversal attempt should be rejected
+  without ever triggering an elicitation prompt.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>This stage did not go as planned, in the most useful way possible —
+  three separate real problems surfaced while actually running the code,
+  each one a genuine gap between "what the source code implies" and "what
+  actually happens end-to-end." Documenting the journey, not just the final
+  state, because each snag is a real lesson.</p>
+
+  <p><strong>Snag 1 — the in-memory client can't do this at all.</strong>
+  The very first attempt used the same <code>Client(mcp)</code> in-memory
+  pattern every stage since Entry 4 has used. It failed immediately:</p>
+  <pre><code>mcp.shared.exceptions.NoBackChannelError: Cannot send 'elicitation/create':
+this transport context has no back-channel for server-initiated requests.</code></pre>
+  <p>This is the real reason Entry 4 hedged: elicitation requires the
+  <em>server</em> to send a request <em>to</em> the client mid-call and wait
+  for a reply — a fundamentally bidirectional exchange. The in-memory
+  shortcut is a direct function call dressed up as a client/server
+  relationship; it has no channel for the server to initiate anything.
+  <strong>Fix:</strong> switched to the real transport Entry 4 deferred —
+  <code>StdioServerParameters</code> + <code>stdio_client</code> +
+  <code>ClientSession</code>, spawning the Filesystem server as an actual
+  subprocess. This is the first genuinely separate-process MCP connection
+  in the whole project, and it exists specifically because Stage 8 needed a
+  real transport, not because it was scheduled.</p>
+
+  <p><strong>Snag 2 — the exact elicitation payload shapes weren't
+  guessable, so they were probed.</strong> Rather than guess at
+  <code>ElicitResult</code>'s fields, a throwaway callback printed the real
+  request/result shapes:</p>
+  <pre><code>params type: ElicitRequestFormParams
+params: {'meta': {}, 'mode': 'form', 'message': "DevPilot wants to write 2 characters to 'probe_test.txt'. Approve?",
+         'requested_schema': {'properties': {}, 'title': 'WriteApproval', 'type': 'object'}, 'task': None}
+ElicitResult fields: ['meta', 'action', 'content']</code></pre>
+  <p>Two corrections to what the docstrings alone suggested: the field
+  carrying accepted form data is called <code>content</code>, not
+  <code>data</code> (that name only shows up server-side, on the
+  <code>AcceptedElicitation</code> wrapper — the wire-level result field is
+  different, the same "attribute name ≠ wire name" lesson from Entry 6's
+  <code>input_schema</code>/<code>inputSchema</code> mismatch, now seen on
+  the response side instead of the request side). And building a valid
+  response requires <code>types.ElicitResult(action="accept", content={})</code>
+  or <code>types.ElicitResult(action="decline")</code> — not the server-side
+  <code>AcceptedElicitation</code>/<code>DeclinedElicitation</code> classes
+  from the Approach, which are a different, server-only representation of
+  the same concept.</p>
+
+  <p><strong>Snag 3 — the "no callback" failure mode isn't a normal tool
+  error, and finding that out took two tries.</strong> First attempt used
+  a plain <code>except MCPError</code> around the no-callback test call — it
+  didn't catch anything, and the script crashed. Reason: <code>anyio</code>'s
+  structured concurrency wraps exceptions raised inside a
+  <code>TaskGroup</code> (which <code>stdio_client</code>/<code>ClientSession</code>
+  use internally) in an <code>ExceptionGroup</code>, not the bare exception.
+  Python 3.11+'s <code>except*</code> syntax is what actually catches it.
+  This is a second, independent confirmation of something worth generalizing:
+  <strong>an error path with no elicitation callback registered isn't a
+  normal <code>CallToolResult(is_error=True)</code> at all</strong> — it's a
+  protocol-level <code>MCPError</code>, a structurally different failure
+  than every other error this project has produced so far (allow-list
+  rejections, sandbox rejections, SSRF rejections, declined approvals — all
+  of those come back as ordinary tool results with <code>is_error=True</code>).</p>
+
+  <p>Final <code>mcp_servers/filesystem/server.py</code> addition:</p>
+  <pre><code>from mcp.server.mcpserver import AcceptedElicitation, Context
+
+class WriteApproval(BaseModel):
+    pass  # no extra fields needed -- accept/decline/cancel IS the answer
+
+@mcp.tool()
+async def write_file(path: str, content: str, ctx: Context) -> str:
+    """Write text to a file in the workspace, after explicit human approval."""
+    target = _resolve_within_workspace(path)   # sandbox check runs FIRST
+
+    outcome = await ctx.elicit(
+        message=f"DevPilot wants to write {len(content)} characters to '{path}'. Approve?",
+        schema=WriteApproval,
+    )
+    if not isinstance(outcome, AcceptedElicitation):
+        raise PermissionError(f"Write to '{path}' was not approved (action={outcome.action}).")
+
+    target.write_text(content, encoding="utf-8")
+    return f"Wrote {len(content)} characters to '{path}'."</code></pre>
+  <p>New file: <code>mcp_client/stage8_client.py</code> — the first client
+  using real stdio transport, with two scripted elicitation callbacks
+  (<code>approve_callback</code>, <code>decline_callback</code>) standing
+  in for a real approval UI, plus a bare <code>ClientSession</code> with no
+  callback at all for the fail-safe test.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Ran <code>.venv/Scripts/python.exe -m mcp_client.stage8_client</code>.
+  All 4 scenarios confirmed, each with an independent <code>read_file</code>
+  check afterward rather than trusting the write call's own report:</p>
+
+  <pre><code>[client asked to approve]: DevPilot wants to write 22 characters to 'stage8_approved.txt'. Approve?
+write_file, approved:
+  {'result': "Wrote 22 characters to 'stage8_approved.txt'."}
+read_file('stage8_approved.txt') -- confirms it was really written:
+  {'result': 'written after approval'}
+
+[client asked to approve]: DevPilot wants to write 19 characters to 'stage8_declined.txt'. Approve?
+write_file, declined:
+  is_error: True
+  Error executing tool write_file: Write to 'stage8_declined.txt' was not approved (action=decline).
+read_file('stage8_declined.txt') -- should fail, file must not exist:
+  is_error: True
+  Error executing tool read_file: No such file: 'stage8_declined.txt'
+
+write_file, NO elicitation_callback registered:
+  Failed safe at the protocol level: unhandled errors in a TaskGroup (1 sub-exception)
+read_file('stage8_no_callback.txt') -- should fail, file must not exist:
+  is_error: True
+  Error executing tool read_file: No such file: 'stage8_no_callback.txt'
+
+write_file('../outside_stage8.txt') -- sandbox should reject before elicit():
+  is_error: True
+  Error executing tool write_file: Access denied: '../outside_stage8.txt' is outside the workspace root.</code></pre>
+
+  <p>What each confirms: the approve path didn't just report success, a
+  separate <code>read_file</code> call proved the content genuinely landed
+  on disk. The decline path proved the opposite — no file, not even an
+  empty one. The no-callback path proved MCP's own default handler
+  (Entry 12's Approach) really does fail safe, and a follow-up
+  <code>read_file</code> proved "failed safe" means "nothing was written,"
+  not just "an error was logged somewhere." And the traversal attempt
+  proved the layering claim from the Approach — sandbox first, approval
+  second — actually holds: no <code>[client asked to approve]</code> line
+  appears for that call, meaning <code>ctx.elicit()</code> was never
+  reached at all.</p>
+
+  <p>Test artifact files (<code>stage8_approved.txt</code> etc.) were
+  deleted from the workspace after confirming the run — they were only ever
+  meant to prove the mechanism, not to persist as project files.</p>
+</div>
+
+<h2 id="entry-13">Entry 13 — Stage 9: Lightweight Planner</h2>
+<div class="entry-meta">2026-08-10 · Stage 9 · Status: <span class="status-done">implemented and tested</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>What's actually new here, and what isn't.</strong> Every stage
+  so far added a new MCP <em>server</em>. Stage 9 adds no server at all —
+  it's the first piece of code on the <em>client</em> side that isn't a
+  single-server test harness. Every client built through Stage 8
+  (<code>lesson1_client.py</code> ... <code>stage8_client.py</code>)
+  connects to exactly <strong>one</strong> server. This is the first client
+  that talks to <strong>two servers in the same script, in sequence, passing
+  results between steps</strong> — which is the actual mechanical substance
+  of "planning and multi-step workflows," more so than anything about
+  cleverness in choosing the plan.</p>
+
+  <p><strong>Deliberate scope boundary — hardcoded plan, not LLM-generated
+  plan.</strong> The build-instructions file's own example (§13) shows a
+  free-text request ("Fix my FastAPI startup problem") turning into a
+  numbered plan — that generation step requires an LLM call, and no LLM
+  integration exists in this project yet (no API key handling, no prompt/
+  response loop has been built at all so far; every "decision" so far has
+  been Python control flow). Building that now would mean standing up LLM
+  integration <em>and</em> planning <em>and</em> multi-server orchestration
+  in one stage — too much at once, and it would blur which part is "MCP
+  mechanics" versus "LLM plumbing." So Stage 9 proves the
+  <strong>execution</strong> half — a plan represented as data, printed for
+  visibility, then executed step by step across multiple live servers, with
+  each step's result available to later steps — using a <strong>fixed,
+  hand-written plan</strong>. The <strong>generation</strong> half (an LLM
+  producing that plan dynamically from a free-text request) is deferred
+  until LLM integration exists, consistent with every prior scope
+  deferral in this project (Stage 3's sync-only, Stage 5's two-tools,
+  Stage 6's SQLite, Stage 8's one-gated-tool) and with the build-instructions
+  file's own "do NOT build a full multi-agent system yet."</p>
+
+  <p><strong>The concrete plan</strong> — real, already-built capabilities,
+  no new server code needed. Chosen because it's grounded (runs against
+  this actual repository) and genuinely spans two servers rather than
+  forcing a third in for appearance:</p>
+  <pre><code>Plan: "Summarize the current state of this project"
+  1. [terminal]   git status --short         -- what's changed
+  2. [terminal]   git log -5 --oneline       -- recent history
+  3. [filesystem] read_file(requirements.txt) -- current dependencies
+  4. [local]      combine 1-3 into one report -- NOT an LLM summary, see below</code></pre>
+  <p><code>git</code> is already in Terminal MCP's allow-list (Stage 3) —
+  zero server changes required for this stage, only a new orchestrator
+  script.</p>
+
+  <p><strong>Being precise about step 4:</strong> it is plain string
+  formatting over the three results, not an LLM synthesizing anything. This
+  project has no LLM wired in yet, so calling it a "summary" without that
+  caveat would overclaim what the code does. The honest framing: Stage 9
+  proves the plumbing an LLM-driven planner would sit on top of, not the
+  reasoning itself.</p>
+
+  <p><strong>Plan representation:</strong> a plan is data — a list of steps,
+  each naming a server, a tool, arguments, and a human-readable description
+  — printed in full <em>before</em> execution starts (mirroring
+  build-instructions §13's own example format,
+  <code>"Plan: 1. ... 2. ..."</code>), then executed one at a time. Worth
+  noting the parallel to this project's own working method: "show the plan
+  before doing anything" is the same discipline this log has followed since
+  Entry 6 (Approach before Implementation) — DevPilot's planner is being
+  asked to behave the same way toward its user that this whole project has
+  behaved toward its own reviewer.</p>
+
+  <p><strong>Failure handling:</strong> steps in this particular plan don't
+  depend on each other's success (reading <code>requirements.txt</code>
+  doesn't need <code>git log</code> to have worked), so a failed step is
+  logged and execution continues rather than aborting the whole plan —
+  the final report notes which steps failed rather than silently omitting
+  them. A plan where step 2 genuinely depends on step 1's output is a
+  natural next stage, not this one.</p>
+
+  <p><strong>Transport choice:</strong> in-memory <code>Client(mcp)</code>
+  for both servers, not the stdio transport Stage 8 required — neither
+  <code>execute_command</code> nor <code>read_file</code> needs a
+  back-channel (no elicitation involved in this plan), so the simpler
+  transport from Stages 1–7 is the right choice here; Stage 8's stdio
+  requirement was specific to elicitation, not a blanket upgrade.</p>
+
+  <p><strong>Will do:</strong> print a hardcoded plan, execute its steps
+  against two real MCP servers in one script, pass results forward, produce
+  a combined (non-LLM) report, keep going past an individual step failure.<br>
+  <strong>Won't do:</strong> generate the plan from a free-text request
+  (needs LLM integration — later), branch the plan based on intermediate
+  results (needs real decision logic — later), or touch Docker/GitHub/
+  Browser/Database in this particular plan (chosen deliberately to keep the
+  demo grounded and minimal, not a limitation of the orchestration code
+  itself).</p>
+
+  <p><strong>How this will be tested</strong> once implemented: (1) run the
+  full plan against this real repository, confirm all 3 steps succeed and
+  the combined report reads coherently; (2) deliberately break one step
+  (e.g. point step 3 at a nonexistent file) to confirm the orchestrator logs
+  the failure and still completes the remaining steps and produces a report,
+  rather than crashing.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>New file: <code>mcp_client/planner.py</code>. A <code>Step</code>
+  dataclass (description, server, tool, args) represents one plan entry;
+  <code>PLAN</code> is a plain list of three of them. <code>_run_step()</code>
+  connects to whichever server the step names, calls the tool, and
+  normalizes the result — including a detail not called out in the
+  Approach: for <strong>dict-returning tools</strong> like
+  <code>execute_command</code>, <code>structured_content</code> is
+  <code>None</code> (the Stage 2/6 finding) and <code>content[0].text</code>
+  is a JSON-encoded string, so it needs <code>json.loads()</code> to become
+  a usable dict again before the report can pull <code>stdout</code>/
+  <code>stderr</code> out of it:</p>
+  <pre><code>async def _run_step(step: Step) -> dict:
+    server = SERVERS[step.server]
+    async with Client(server) as client:
+        result = await client.call_tool(step.tool, step.args)
+
+    if result.is_error:
+        return {"ok": False, "error": result.content[0].text}
+
+    if result.structured_content is not None:
+        value = result.structured_content
+    else:
+        raw = result.content[0].text
+        try:
+            value = json.loads(raw)          # dict-returning tools: JSON text -> dict
+        except (json.JSONDecodeError, TypeError):
+            value = raw                       # str-returning tools: already plain text
+
+    return {"ok": True, "value": value}</code></pre>
+  <p><code>run_plan()</code> prints the plan up front, then executes each
+  step in a loop, printing <code>done.</code> or <code>FAILED: ...</code>
+  live and appending every outcome (success or failure) to the results
+  list — nothing raises out of the loop on a single step's failure.
+  <code>_build_report()</code> is the plain-formatting step, explicit in
+  its own docstring that it is not an LLM summary.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Ran <code>.venv/Scripts/python.exe -m mcp_client.planner</code>
+  against this real repository. Both scenarios worked exactly as designed
+  — and the first one produced an honest, useful surprise:</p>
+
+  <pre><code>## Check what's changed
+fatal: not a git repository (or any of the parent directories): .git
+
+## Check recent history
+fatal: not a git repository (or any of the parent directories): .git
+
+## Read current dependencies
+mcp
+httpx2</code></pre>
+
+  <p>This project folder isn't actually a git repository (confirmed
+  separately in this environment's own metadata). Both <code>git</code>
+  steps still show up as <code>done.</code>, not <code>FAILED:</code> — the
+  <em>tool call</em> succeeded exactly as Stage 3 established: a command
+  that runs and reports failure (git's own <code>fatal:</code> message,
+  non-zero exit code) is not the same thing as the tool erroring. What
+  makes this a genuinely useful validation rather than a lucky accident:
+  <code>_build_report()</code>'s fallback —
+  <code>value["stdout"].strip() or value["stderr"].strip()</code> — is what
+  surfaced git's real error message in the report at all. Without that
+  fallback, an empty <code>stdout</code> would have produced a silent,
+  content-free report section instead of the actual reason nothing came
+  back. This is Stage 3's lesson showing up, unprompted, in real
+  orchestration for the first time.</p>
+
+  <p>Failure-handling test — step 3 pointed at
+  <code>does_not_exist.txt</code>:</p>
+  <pre><code>Running step 3: Read current dependencies...
+  FAILED: Error executing tool read_file: No such file: 'does_not_exist.txt'
+
+## Read current dependencies
+FAILED: Error executing tool read_file: No such file: 'does_not_exist.txt'</code></pre>
+  <p>Steps 1 and 2 still ran and completed, the loop did not abort on
+  step 3's failure, and the final report includes all three sections —
+  the failed one clearly marked rather than silently missing. This confirms
+  the "keep going past an individual step failure" design decision actually
+  holds, not just that it was written into the code.</p>
+</div>
+
+<h2 id="entry-14">Entry 14 — Stage 10: Memory</h2>
+<div class="entry-meta">2026-08-10 · Stage 10 · Status: <span class="status-done">implemented and tested</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Concept being taught:</strong> the build-instructions file
+  (§20) asks specifically for the difference between conversation memory,
+  project memory, long-term memory, and RAG to be explained — the clearest
+  way to actually teach that difference is to build two of them with
+  visibly different behavior, not just describe the difference in prose.</p>
+
+  <table>
+    <tr><th>Kind</th><th>Lifetime</th><th>In scope for Stage 10?</th></tr>
+    <tr><td>Session / conversation memory</td><td>Dies when the process exits</td><td>Yes — <code>SessionMemory</code></td></tr>
+    <tr><td>Project memory</td><td>Persists across separate runs, structured facts</td><td>Yes — <code>ProjectMemory</code></td></tr>
+    <tr><td>Long-term memory</td><td>Persists and accumulates/learns across many projects over time</td><td>No — explicitly out of scope</td></tr>
+    <tr><td>RAG</td><td>Semantic retrieval over unstructured documents</td><td>No — already deferred in the project design doc (§21) and not needed here; Stage 5's <code>search_web</code>/<code>fetch_page</code> already cover "look something up," which is most of what RAG would add at this scale</td></tr>
+  </table>
+
+  <p><strong>Deliberate design choice: memory lives client-side, not as a
+  new MCP server.</strong> Every prior stage but 9 added a server; this one
+  adds neither a server nor a tool. The build-instructions file discusses
+  Memory alongside Planning/Tool Selection/Tool Chaining (§13–15, §20), not
+  alongside the server sections (§6–11) — and structurally, memory is the
+  orchestrator's <em>own</em> state, not a capability meant to be discovered
+  and invoked by something else. Making it an MCP tool would blur a
+  distinction worth keeping sharp: not everything DevPilot does has to be
+  MCP-shaped.</p>
+
+  <p><strong>Deliberate design choice: a JSON file, not the Database MCP.</strong>
+  Project memory could plausibly live in <code>devpilot_demo.db</code> (a
+  new table), which would also motivate finally extending Stage 8's
+  approval-gated-write pattern to a second server — genuinely tempting, and
+  flagged in Stage 8's own Approach as "a natural, low-risk follow-up." Not
+  doing it now: the build-instructions file's explicit instruction for this
+  exact stage is "do NOT introduce complicated ... initially," and routing
+  through Database MCP would mean building/testing a second approval-gated
+  write path as a side effect of a memory stage, not as its actual point.
+  A plain JSON file is the smallest thing that proves real persistence.</p>
+
+  <p><strong>Planned implementation</strong> — new file,
+  <code>mcp_client/memory.py</code>, two classes:</p>
+  <pre><code>class SessionMemory:
+    # in-process only, a list of (step, outcome, timestamp).
+    # No file I/O at all -- this is the point: it cannot outlive the process.
+    def record(self, step, outcome): ...
+    def summary(self) -> str: ...
+
+class ProjectMemory:
+    # backed by mcp_client/memory/project_memory.json
+    def get(self, key, default=None): ...
+    def set(self, key, value): ...   # writes to disk immediately
+    def all(self) -> dict: ...</code></pre>
+  <p>Seeded on first creation with facts about <em>this</em> project,
+  matching the shape of the build-instructions file's own example
+  (project / entry point / test command / run command), populated with
+  DevPilot's real values rather than the FastAPI placeholder from the
+  build-instructions file — e.g. <code>entry_points</code> listing the six
+  server modules, <code>run_command</code> pointing at
+  <code>planner.py</code>. Also tracks a simple counter,
+  <code>stages_completed</code>, updated on each run — chosen specifically
+  because a counter only proves persistence if it's genuinely read back and
+  incremented across separate process invocations, not just written once.</p>
+
+  <p><strong>Integration:</strong> <code>planner.py</code> gets a light
+  touch — each step's outcome is recorded into a <code>SessionMemory</code>
+  as it runs (formalizing what was already an ad-hoc results list in Stage 9
+  into a proper memory object with its own API), and at the end it reads a
+  couple of <code>ProjectMemory</code> facts, prints them, then bumps
+  <code>stages_completed</code>.</p>
+
+  <p><strong>Will do:</strong> demonstrate genuinely different lifetimes for
+  two kinds of memory, backed by real file persistence for one of them, with
+  no new server or tool.<br>
+  <strong>Won't do:</strong> route memory through Database MCP (see above,
+  future refinement, not this stage), any embeddings/vector store/RAG, or
+  long-term cross-project learning.</p>
+
+  <p><strong>How this will be tested</strong> once implemented: (1) run
+  <code>planner.py</code> once, confirm <code>project_memory.json</code> is
+  created with seed facts and <code>stages_completed</code> starts at 1;
+  (2) run it again as a genuinely separate process, confirm
+  <code>stages_completed</code> reads back as 1 and becomes 2 — real
+  cross-run persistence, not a coincidence of still being in the same
+  Python process; (3) confirm <code>SessionMemory</code> starts empty on
+  every run regardless of what <code>ProjectMemory</code> remembers — the
+  lifetime contrast made concrete, not just asserted.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>New file: <code>mcp_client/memory.py</code>, exactly the two classes
+  from the Approach. <code>ProjectMemory</code> reads and rewrites the whole
+  JSON file on every <code>get</code>/<code>set</code> rather than caching
+  it in memory — deliberately simple (no in-process cache to keep in sync
+  with the file, no partial-write risk to reason about) and appropriate for
+  a file this small; a real production version would batch writes, but that
+  optimization isn't needed at this scale and would just be speculative
+  complexity here.</p>
+
+  <pre><code>class SessionMemory:
+    def __init__(self) -> None:
+        self._entries: list[dict] = []   # lives only as long as this object does
+
+    def record(self, step, outcome) -> None:
+        self._entries.append({"step": step, "ok": outcome.get("ok"), "timestamp": ...})
+
+class ProjectMemory:
+    def __init__(self, path=PROJECT_MEMORY_PATH) -> None:
+        self._path = path
+        if not self._path.exists():
+            self._write(dict(_SEED_FACTS))   # seeded once, then just persists
+
+    def get(self, key, default=None):
+        return self._read().get(key, default)
+
+    def set(self, key, value) -> None:
+        data = self._read()
+        data[key] = value
+        self._write(data)                     # every set() hits disk immediately</code></pre>
+
+  <p><code>planner.py</code> integration: a <code>SessionMemory</code> is
+  created fresh in <code>main()</code> (and again for the failure-handling
+  sub-plan — two independent session objects in one process run, each
+  starting empty), with <code>run_plan()</code> now accepting an optional
+  <code>session</code> and calling <code>session.record()</code> after every
+  step. <code>ProjectMemory</code> facts are printed at the top of the run,
+  and <code>stages_completed</code> is read, incremented, and written back
+  at the end.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Deleted any existing <code>project_memory.json</code> first, to start
+  from a clean, known state, then ran
+  <code>.venv/Scripts/python.exe -m mcp_client.planner</code> <strong>twice,
+  as two genuinely separate process invocations</strong> (not two calls
+  within one script) — the only way to actually prove cross-run
+  persistence rather than assume it.</p>
+
+  <p><strong>Run 1</strong> (fresh file, seed values):</p>
+  <pre><code>Project memory (persists across runs):
+  project: DevPilot AI (MCP learning project)
+  run_command: python -m mcp_client.planner
+  test_command: none configured yet
+  stages_completed: 0
+...
+ProjectMemory updated: stages_completed = 1 (persisted to disk)</code></pre>
+
+  <p><strong>Run 2</strong> (separate process, started after Run 1 fully
+  exited):</p>
+  <pre><code>Project memory (persists across runs):
+  project: DevPilot AI (MCP learning project)
+  run_command: python -m mcp_client.planner
+  test_command: none configured yet
+  stages_completed: 1</code></pre>
+
+  <p>Run 2 read back exactly the value Run 1 wrote — a brand-new Python
+  process, with no shared memory to Run 1 whatsoever, still saw
+  <code>stages_completed: 1</code>. Reading the file directly after both
+  runs confirms the full picture:</p>
+  <pre><code>{
+  "project": "DevPilot AI (MCP learning project)",
+  ...
+  "stages_completed": 2
+}</code></pre>
+  <p>Two runs, counter now at 2 — genuine persistence, not a fluke.
+  Meanwhile, every single <code>SessionMemory.summary()</code> printed
+  during both runs started from zero entries and only ever showed that
+  run's own steps:</p>
+  <pre><code>Session memory (3 entries this run):
+  - [ok] Check what's changed @ 2026-08-10T10:40:08.675652+00:00
+  - [ok] Check recent history @ 2026-08-10T10:40:08.738784+00:00
+  - [ok] Read current dependencies @ 2026-08-10T10:40:08.838160+00:00</code></pre>
+  <p>No entry from Run 1's failure-handling sub-plan ever appeared in Run
+  2's session summary, and no entry from Run 2 could possibly appear in
+  Run 1's (it hadn't happened yet) — the lifetime contrast the whole stage
+  was built to demonstrate holds up under an actual two-process test, not
+  just in the class design.</p>
+</div>
+
+<h2 id="entry-15">Entry 15 — Stage 7 (revisited): Docker MCP</h2>
+<div class="entry-meta">2026-08-11 · Stage 7 · Status: <span class="status-done">implemented and fully tested against a real Docker daemon</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Re-checked before planning further:</strong> same command as
+  Entry 11 — still no <code>docker</code> CLI anywhere on <code>PATH</code>
+  in this environment. That fact hasn't changed. What's changed is the
+  decision: build it now anyway, since the code and its safety layers are
+  real and reviewable even where Docker itself isn't installed — and,
+  importantly, more of this is actually testable than "no Docker = nothing
+  testable" would suggest. Being precise about the split, upfront:</p>
+  <table>
+    <tr><th>Testable here, without Docker</th><th>NOT testable here</th></tr>
+    <tr><td>Allow-list rejects a non-Docker subcommand</td><td>Whether a real <code>docker ps</code> actually lists real containers correctly</td></tr>
+    <tr><td>Build-context sandbox rejects a path outside the workspace</td><td>Whether <code>docker build</code>/<code>run</code>/<code>stop</code> behave correctly against a real daemon</td></tr>
+    <tr><td>Approval flow (decline path) for the three gated tools</td><td>Real container log/inspect output shape</td></tr>
+    <tr><td>The "Docker not installed" failure path itself — a real, meaningful error case</td><td></td></tr>
+  </table>
+  <p>That bottom-left row deserves its own note: "Docker isn't installed"
+  is not a gap in testing, it <em>is</em> a real scenario this server needs
+  to handle gracefully (a DevPilot user without Docker installed is a real
+  case, not a hypothetical) — so confirming a clean, clear error instead of
+  a raw traceback is itself a genuine, meaningful test outcome, not a
+  consolation prize.</p>
+
+  <p><strong>This stage doesn't invent a new mechanism — it combines three
+  already-built ones.</strong> That's deliberate: Docker MCP is the most
+  powerful, most dangerous server in the whole architecture (host-level
+  process/container control), so reusing already-tested patterns beats
+  designing new safety logic under time pressure.</p>
+  <ul>
+    <li><strong>From Terminal MCP (Stage 3):</strong> command allow-list +
+    <code>subprocess.run(argv, shell=False)</code> — no shell, no
+    metacharacter risk, by construction.</li>
+    <li><strong>From Filesystem MCP (Stage 1/2):</strong> the
+    <code>_resolve_within_workspace()</code> sandbox pattern, reused for
+    <code>build_image</code>'s Dockerfile directory — a build context
+    outside the workspace is refused the same way a file read outside it
+    is.</li>
+    <li><strong>From Stage 8:</strong> <code>ctx.elicit()</code> human
+    approval, reused for the three state-changing tools.</li>
+  </ul>
+
+  <p><strong>Six tools</strong>, split by whether they change anything —
+  matching the build-instructions file's own list, with the read/write
+  split made explicit rather than implicit:</p>
+  <table>
+    <tr><th>Tool</th><th>Docker command</th><th>Approval?</th></tr>
+    <tr><td><code>list_containers(all=True)</code></td><td><code>docker ps [-a]</code></td><td>No — read-only</td></tr>
+    <tr><td><code>inspect_container(container)</code></td><td><code>docker inspect &lt;id&gt;</code></td><td>No — read-only</td></tr>
+    <tr><td><code>get_container_logs(container, tail=100)</code></td><td><code>docker logs --tail N &lt;id&gt;</code></td><td>No — read-only</td></tr>
+    <tr><td><code>build_image(dockerfile_dir, tag)</code></td><td><code>docker build -t &lt;tag&gt; &lt;dir&gt;</code></td><td><strong>Yes</strong> — runs arbitrary Dockerfile instructions</td></tr>
+    <tr><td><code>run_container(image, name)</code></td><td><code>docker run -d --name &lt;name&gt; &lt;image&gt;</code></td><td><strong>Yes</strong> — starts a real process</td></tr>
+    <tr><td><code>stop_container(container)</code></td><td><code>docker stop &lt;id&gt;</code></td><td><strong>Yes</strong> — the exact example from the build-instructions file's own approval-system illustration (§19)</td></tr>
+  </table>
+  <p>All six return the same shape as Terminal MCP's <code>execute_command</code>
+  — <code>{"stdout", "stderr", "exit_code"}</code> — rather than inventing a
+  different result shape per tool. Every Docker tool is structurally "run
+  one specific, safety-checked <code>docker</code> subcommand"; keeping the
+  return shape uniform is consistency, not a missed opportunity to
+  specialize.</p>
+
+  <p><strong>Timeout — flagging the tension rather than solving it.</strong>
+  <code>docker build</code> can legitimately run for minutes; Terminal
+  MCP's 120s cap doesn't fit. Setting a longer cap specifically for
+  <code>build_image</code> (300s) rather than raising the global cap — this
+  is exactly the "isolate long-running tools behind a job queue" tension
+  flagged in the project design doc's production section, and still not
+  being solved with Redis/Arq here, since it remains genuinely untestable
+  without a real, possibly-slow Docker build to observe. A longer bounded
+  timeout is the honest, minimal answer for a stage that can't be tested
+  against a real daemon anyway.</p>
+
+  <p><strong>Will do:</strong> six tools reusing three already-proven safety
+  mechanisms, a graceful "Docker not installed" failure path, approval
+  gating on every state-changing operation.<br>
+  <strong>Won't do:</strong> claim end-to-end verification against a real
+  Docker daemon (impossible here, stated plainly rather than implied),
+  introduce a job queue to handle long builds (still deferred, same
+  reasoning as every prior stage).</p>
+
+  <p><strong>How this will be tested</strong> once implemented, entirely
+  within what's honestly testable here: (1) allow-list rejection for a
+  non-Docker-subcommand call; (2) sandbox rejection for a
+  <code>build_image</code> call pointed outside the workspace; (3) decline
+  path for one approval-gated tool, confirming no <code>docker</code>
+  process is even attempted when declined; (4) an approved call to a
+  read-only tool, confirming it fails with a clean
+  <code>FileNotFoundError</code>-shaped message ("docker is not installed")
+  rather than a raw traceback.</p>
+</div>
+
+<div class="approach">
+  <span class="tag">Approach — update, 2026-08-11</span>
+  <p>Docker got installed after this Approach was posted — user installed
+  Docker Engine inside the machine's existing WSL2 Ubuntu distro (confirmed:
+  <code>docker</code> is at <code>/usr/bin/docker</code> inside WSL,
+  version 29.7.2, daemon running, 2 real containers already up). This
+  changes the plan in two real ways, discovered by testing directly rather
+  than assumed:</p>
+  <ul>
+    <li><strong>Docker isn't reachable as a bare <code>docker</code> command
+    from Windows at all</strong> — it's not on Windows <code>PATH</code>,
+    not at the usual Docker Desktop install location. It only exists inside
+    WSL. Since DevPilot's MCP servers run as Windows Python processes, every
+    docker call has to be bridged through <code>wsl.exe</code>:
+    <code>["wsl", "-d", "Ubuntu", "-e", "docker", &lt;subcommand&gt;, ...]</code>
+    instead of a bare <code>["docker", ...]</code> — confirmed working by
+    calling it through <code>subprocess.run()</code> from the actual
+    <code>.venv</code> Python before writing any server code, the same
+    verify-before-implementing discipline as every prior stage.</li>
+    <li><strong>Build-context paths need translating.</strong>
+    <code>WORKSPACE_ROOT</code> is a Windows path
+    (<code>C:\Users\...\Project - MCP</code>); <code>docker build</code>
+    runs inside WSL and needs a Linux-style path. WSL auto-mounts Windows
+    drives under <code>/mnt/&lt;drive&gt;/...</code>, so
+    <code>build_image</code> needs a small
+    <code>_to_wsl_path()</code> conversion between the sandbox check
+    (which stays Windows-side, reusing the Filesystem-style check as
+    planned) and the actual argument handed to <code>docker build</code>.</li>
+  </ul>
+  <p>Real testing is now possible for all six tools, not just the
+  allow-list/sandbox/approval-plumbing subset the original Approach
+  planned around — including a genuine <code>build_image</code> →
+  <code>run_container</code> → <code>get_container_logs</code> →
+  <code>stop_container</code> lifecycle against a real image built for this
+  test. Implementation and Outcome below reflect the full real run, not the
+  reduced scope originally planned when Docker wasn't available.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>Files: <code>mcp_servers/docker/server.py</code> (new server, six
+  tools), <code>mcp_client/stage7_client.py</code> (new test client, real
+  stdio transport per Stage 8's requirement for the three approval-gated
+  tools), <code>mcp_servers/docker/_test_build/Dockerfile</code> (a minimal
+  <code>busybox</code>-based fixture used only to prove
+  <code>build_image</code> against a real build).</p>
+
+  <p>The WSL bridge and path translation, exactly as the Approach update
+  described, verified working before any tool code was written:</p>
+  <pre><code>def _to_wsl_path(path: Path) -> str:
+    """Windows path -> WSL's auto-mounted /mnt/&lt;drive&gt;/... equivalent."""
+    drive = path.drive.rstrip(":").lower()
+    rest = str(path)[len(path.drive):].replace("\\", "/").lstrip("/")
+    return f"/mnt/{drive}/{rest}"
+
+def _run_docker(args: list[str], timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
+    if not args or args[0] not in ALLOWED_SUBCOMMANDS:
+        raise ValueError(f"Docker subcommand '{args[0] if args else '(empty)'}' is not allowed. "
+                          f"Allowed: {sorted(ALLOWED_SUBCOMMANDS)}")
+    argv = ["wsl", "-d", WSL_DISTRO, "-e", "docker", *args]
+    completed = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, shell=False)
+    return {"stdout": completed.stdout, "stderr": completed.stderr, "exit_code": completed.returncode}</code></pre>
+
+  <p>One thing worth noting about the allow-list here versus Terminal
+  MCP's: none of the six tools actually expose a parameter letting a caller
+  choose an arbitrary docker subcommand — each tool hardcodes its own
+  (<code>list_containers</code> always calls <code>ps</code>,
+  <code>stop_container</code> always calls <code>stop</code>, etc.). The
+  allow-list inside <code>_run_docker()</code> is therefore
+  <strong>defense-in-depth against future tools</strong>, not something
+  reachable through today's public API — different from Terminal MCP,
+  where <code>command</code> is a free parameter and the allow-list is the
+  primary gate on every call. Worth being explicit about which role a
+  safety check is playing.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Every planned scenario, plus the full real lifecycle the update
+  enabled, run against the actual Docker daemon in WSL — no simulation, no
+  mocking.</p>
+
+  <p><strong>Read-only tools against the two containers that were already
+  running</strong> (from an unrelated project) — <code>list_containers()</code>,
+  <code>inspect_container()</code>, <code>get_container_logs()</code> all
+  returned real, correctly-shaped Docker output on the first call, no
+  fixes needed.</p>
+
+  <p><strong>Sandbox rejection</strong> —
+  <code>build_image('../outside_docker_test', ...)</code>:</p>
+  <pre><code>is_error: True
+Error executing tool build_image: Access denied: '../outside_docker_test' is outside the workspace root.</code></pre>
+  <p>Rejected before any elicitation prompt and before any docker process
+  was spawned — confirming the reused Filesystem-style sandbox check runs
+  first, exactly as designed.</p>
+
+  <p><strong>Decline path</strong> — approval declined, confirmed via the
+  clean <code>PermissionError</code>-shaped message and, more importantly,
+  by there being no build output at all (a real <code>docker build</code>
+  would have printed BuildKit progress lines even on failure; there were
+  none, meaning it was never invoked).</p>
+
+  <p><strong>The full real lifecycle</strong> — build → run → logs → stop,
+  every step approved, every step genuinely executed:</p>
+  <pre><code>build_image, approved (real docker build):
+  #4 [1/1] FROM docker.io/library/busybox:latest@sha256:dc2d74b2...
+  #5 exporting to image ... naming to docker.io/library/devpilot-stage7-test:latest
+  exit_code: 0
+
+run_container, approved (real docker run):
+  stdout: be949fdbaf12ee4b1f65d35209d5e240e45c6ccddd711f58aa72b1068059255a
+  exit_code: 0
+
+get_container_logs(devpilot-stage7-test-container):
+  stdout: hello from devpilot docker mcp stage 7
+  exit_code: 0
+
+stop_container, approved (real docker stop):
+  stdout: devpilot-stage7-test-container
+  exit_code: 0
+
+list_containers():
+  devpilot-stage7-test-container ... Exited (0) 2 seconds ago</code></pre>
+  <p>The logs line is the clearest possible confirmation: that exact string
+  only exists because the <code>Dockerfile</code>'s <code>CMD</code> ran
+  inside a container that was actually built and actually started by this
+  server — not a fixture, not a stub.</p>
+
+  <p><strong>No-shell confirmation, same pattern as Stage 3:</strong> calling
+  <code>inspect_container</code> with <code>container="x; rm -rf /"</code>
+  produced <code>error: no such object: x; rm -rf /</code> — the entire
+  string was treated as one literal (nonexistent) container name.
+  <code>shell=False</code> means there is no shell to interpret
+  <code>;</code> as a command separator, the same guarantee Terminal MCP
+  established, now reused for a second server.</p>
+
+  <p><strong>Allow-list, tested directly</strong> (bypassing the tool layer,
+  since no tool exposes a free subcommand parameter — see Implementation
+  note above):</p>
+  <pre><code>_run_docker(['rm', 'some-container'])
+-> ValueError: Docker subcommand 'rm' is not allowed. Allowed: ['build', 'inspect', 'logs', 'ps', 'run', 'stop']</code></pre>
+
+  <p><strong>Cleanup:</strong> the real container and image this test
+  created were removed from the actual Docker environment afterward
+  (<code>docker rm</code>, <code>docker rmi</code>) — this test exercised
+  real system resources, not repo-local fixtures, so it was cleaned up the
+  same way any manual Docker experiment would be.</p>
+</div>
+
+<h2 id="entry-16">Entry 16 — Git MCP (closing the 7th-server gap)</h2>
+<div class="entry-meta">2026-08-11 · Not a build-instructions "Stage" — a gap discovered and closed by user question · Status: <span class="status-done">implemented and tested</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Why this entry exists at all.</strong> The project design doc
+  (<code>DevPilot_AI_MCP_Project_Design.md</code>) lists <strong>7</strong>
+  MCP servers, Git being one of them ("Version control"). The
+  build-instructions file's own architecture (§5) and Stage list (§25) only
+  ever specify <strong>6</strong> — it folds git operations into Terminal
+  MCP's allowed commands (§7 lists <code>git</code> as an example) and only
+  discusses "Git security" (§19: require approval before commit/push/
+  branch-deletion) as a cross-cutting concern, not grounds for a dedicated
+  server. Every server built through Entry 15 followed the
+  build-instructions file's Stage sequence, which quietly drops the 7th
+  server the higher-level design doc promised. Unlike every other
+  deviation in this project — SQLite vs. Postgres, the Docker deferral,
+  dropping <code>list_databases</code> — this one was never flagged in the
+  moment. It surfaced only when asked directly. Worth being honest about:
+  a discrepancy between two source documents, caught late, not a
+  considered trade-off made in real time.</p>
+
+  <p><strong>Scope, using the one concrete signal the build-instructions
+  file does give</strong> (§19, "Git security"): approval is required before
+  <em>commit</em>, <em>push</em>, and <em>branch deletion</em>. That list is
+  taken as the actual spec for what needs gating, rather than inventing a
+  new judgment call. PR creation is explicitly out of scope here — that's a
+  GitHub API operation (already the boundary GitHub MCP vs. Terminal/Git
+  draws: GitHub MCP = the remote API, Git MCP = the local <code>git</code>
+  CLI).</p>
+
+  <pre><code>Read-only, no approval:
+  git_status()                    -- git status --short
+  git_log(limit=10)               -- git log -n &lt;limit&gt; --oneline
+  git_diff(path=None)             -- git diff [-- &lt;path&gt;]
+  git_list_branches()             -- git branch -a
+
+Write, ungated (low-risk, easily reversible):
+  git_create_branch(name)         -- git checkout -b &lt;name&gt;
+
+Write, approval-gated (per build-instructions §19, explicitly):
+  git_commit(message)             -- git commit -m &lt;message&gt;
+  git_delete_branch(name, force)  -- git branch -d/-D &lt;name&gt;
+  git_push(remote="origin", branch=None)  -- git push &lt;remote&gt; [&lt;branch&gt;]</code></pre>
+
+  <p><strong>Mechanism: nothing new, same reuse discipline as Docker MCP.</strong>
+  A shared <code>_run_git()</code> helper mirrors Terminal's
+  <code>_run_command</code>/Docker's <code>_run_docker</code>: fixed
+  <code>cwd=WORKSPACE_ROOT</code>, <code>subprocess.run(argv, shell=False)</code>,
+  a subcommand allow-list (<code>status</code>, <code>log</code>,
+  <code>diff</code>, <code>branch</code>, <code>commit</code>,
+  <code>push</code>, <code>checkout</code>) as defense-in-depth, bounded
+  timeout. The three gated tools reuse Stage 8's exact
+  <code>ctx.elicit()</code> pattern — third use of that mechanism now
+  (Filesystem's <code>write_file</code>, Docker's three tools, and now
+  Git's three).</p>
+
+  <p><strong>Being upfront about testing limits here:</strong> this project
+  folder isn't actually a git repository (established back in Stage 9 —
+  <code>git status</code>/<code>git log</code> both failed with
+  <code>fatal: not a git repository</code> when the planner ran them). That
+  won't change unless <code>git init</code> is run, which is a real,
+  visible change to this project's state — not something to do unprompted.
+  So the honest test plan here is: (1) confirm every tool produces that
+  same clean "not a git repository" result rather than a crash — a
+  legitimate real behavior, not a workaround; (2) confirm the approval
+  flow (decline/approve) works correctly regardless of whether the
+  underlying git command can succeed; (3) confirm the allow-list rejects a
+  disallowed subcommand. <code>git push</code> in particular will never be
+  live-tested against a real remote here — pushing is exactly the kind of
+  hard-to-reverse, shared-state action that needs explicit, scoped
+  confirmation each time, and there's no remote configured to push to
+  regardless.</p>
+
+  <p><strong>Will do:</strong> seven tools, reusing three already-proven
+  mechanisms, matching the build-instructions file's own approval
+  requirements exactly.<br>
+  <strong>Won't do:</strong> run <code>git init</code> on this project
+  without being asked, attempt any real push, or add PR-creation tooling
+  (GitHub MCP's territory, already noted there as a deferred write op).</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>Files: <code>mcp_servers/git/server.py</code> (new server, 8 tools —
+  the Approach planned 7, <code>git_create_branch</code> was added as the
+  one ungated write tool, bringing the real total to 4 read-only + 1
+  ungated-write + 3 approval-gated), <code>mcp_client/git_client.py</code>
+  (new test client).</p>
+
+  <pre><code>ALLOWED_SUBCOMMANDS = {"status", "log", "diff", "branch", "commit", "push", "checkout"}
+
+def _run_git(args: list[str], timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
+    if not args or args[0] not in ALLOWED_SUBCOMMANDS:
+        raise ValueError(f"Git subcommand '{args[0] if args else '(empty)'}' is not allowed. "
+                          f"Allowed: {sorted(ALLOWED_SUBCOMMANDS)}")
+    argv = ["git", *args]
+    completed = subprocess.run(argv, cwd=WORKSPACE_ROOT, capture_output=True,
+                                text=True, timeout=timeout, shell=False)
+    return {"stdout": completed.stdout, "stderr": completed.stderr, "exit_code": completed.returncode}
+
+@mcp.tool()
+async def git_commit(message: str, ctx: Context) -> dict:
+    outcome = await ctx.elicit(message=f"DevPilot wants to commit with message: '{message}'. Approve?",
+                                schema=GitApproval)
+    if not isinstance(outcome, AcceptedElicitation):
+        raise PermissionError(f"Commit was not approved (action={outcome.action}).")
+    return _run_git(["commit", "-m", message])</code></pre>
+
+  <p>Same shape as Docker MCP throughout: a shared
+  <code>_run_git()</code> helper, an allow-list that's defense-in-depth
+  (no tool exposes a free subcommand parameter here either — every tool
+  hardcodes its own), and the three write tools each independently calling
+  <code>ctx.elicit()</code> before touching the process.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Ran <code>.venv/Scripts/python.exe -m mcp_client.git_client</code>.
+  Every result matched the honest prediction from the Approach — this
+  folder genuinely isn't a git repository, and that showed up correctly
+  everywhere rather than crashing anything:</p>
+
+  <pre><code>git_status({}):
+  {"stdout": "", "stderr": "fatal: not a git repository (or any of the parent directories): .git\n", "exit_code": 128}
+
+git_log({'limit': 5}):
+  {"stdout": "", "stderr": "fatal: not a git repository...", "exit_code": 128}
+
+git_diff({}):
+  {"stdout": "", "stderr": "warning: Not a git repository...", "exit_code": 129}
+
+git_list_branches({}):
+  {"stdout": "", "stderr": "fatal: not a git repository...", "exit_code": 128}</code></pre>
+
+  <p>None of these were <code>is_error</code> — every single one is
+  Stage 3's "tool succeeded, command reported failure" principle showing
+  up in a fourth server now (Terminal, the planner, Docker, and now Git).
+  The tool call did exactly what it was supposed to do: run
+  <code>git status</code> in this directory and report back whatever
+  happened, honestly.</p>
+
+  <p>Approval flow — decline paths for all three gated tools confirmed
+  rejection before any git process ran:</p>
+  <pre><code>git_commit, declined:
+  is_error: True
+  Error executing tool git_commit: Commit was not approved (action=decline).
+
+git_push, declined:
+  is_error: True
+  Error executing tool git_push: Push to 'origin' was not approved (action=decline).
+
+git_delete_branch, declined:
+  is_error: True
+  Error executing tool git_delete_branch: Deletion of branch 'some-branch' was not approved (action=decline).</code></pre>
+
+  <p>And the one <em>approved</em> gated call —
+  <code>git_commit</code> — proceeded exactly as far as it honestly could:</p>
+  <pre><code>git_commit, approved (expect clean git error, not a crash):
+  {"stdout": "", "stderr": "fatal: not a git repository (or any of the parent directories): .git\n", "exit_code": 128}</code></pre>
+  <p>This is the specific result worth pausing on: approval was granted,
+  <code>ctx.elicit()</code> returned <code>AcceptedElicitation</code>, and
+  the code proceeded to actually call <code>_run_git(["commit", "-m", ...])</code>
+  — the approval → execution wiring is proven to work, independent of
+  whether the underlying git operation could succeed in this environment.
+  Never <code>git init</code>'d this project to make the demo look
+  cleaner, as the Approach committed to.</p>
+
+  <p>Allow-list, tested directly (same reason as Docker — no tool exposes
+  a reachable path to the rejection):</p>
+  <pre><code>_run_git(['rebase', '-i', 'HEAD~3'])
+-> ValueError: Git subcommand 'rebase' is not allowed. Allowed: ['branch', 'checkout', 'commit', 'diff', 'log', 'push', 'status']</code></pre>
+
+  <p>No real push was ever attempted, matching the Approach's explicit
+  boundary — there's no remote configured here regardless, and pushing to
+  a real one is exactly the kind of action that needs live, scoped
+  confirmation each time, not a demo run.</p>
+</div>
+
+<h2 id="entry-17">Entry 17 — First LLM integration (local Ollama, zero cost)</h2>
+<div class="entry-meta">2026-08-11 · The "AI" in DevPilot AI, for the first time · Status: <span class="status-done">implemented and tested against the real, running model</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>How the provider decision actually happened — worth recording
+  honestly.</strong> The original plan (user-selected, earlier in this
+  project) was Anthropic Claude. Before writing any code, I checked whether
+  credentials existed at all — no <code>ANTHROPIC_API_KEY</code>, no
+  <code>ant</code> CLI, no OAuth profile — a real, confirmed gap, not an
+  assumption. The user then asked directly whether their Claude Code
+  subscription would cover API usage. I did not know, and said so rather
+  than guessing — API billing and subscription billing are historically
+  separate, but asserting that confidently either way risked being wrong
+  about someone's money. The user checked and confirmed: the API costs
+  separately. <strong>Zero cost</strong> then became the actual, explicit
+  requirement, stated twice.</p>
+
+  <p><strong>What's actually free:</strong> earlier Docker MCP exploration
+  (Entry 15) had already surfaced an <code>ollama/ollama:latest</code>
+  container running in this environment, from an unrelated project, with
+  two models already pulled. Checked directly rather than assumed
+  suitable:</p>
+  <pre><code>curl http://172.18.0.2:11434/api/tags
+-> qwen2.5:7b-instruct — capabilities: ["completion", "tools"]
+-> llava:latest        — capabilities: ["completion", "vision"]</code></pre>
+  <p><code>qwen2.5:7b-instruct</code> genuinely supports tool/function
+  calling — confirmed via the API's own capabilities field, not assumed
+  from the model name. This matters directly: Piece 2 (dynamic MCP tool
+  selection) needs a tool-calling-capable model, and this one qualifies,
+  for zero cost, already running.</p>
+
+  <p><strong>Same cross-environment shape as Docker MCP, confirmed the same
+  way — by testing, not assuming:</strong> the container's bridge IP
+  (<code>172.18.0.2</code>) answers from WSL but timed out when called
+  directly from a Windows <code>httpx2</code> client — it's not published
+  to the Windows host, only reachable inside WSL's network namespace.
+  Every call bridges through <code>wsl.exe</code>, mirroring
+  <code>_run_docker()</code>'s pattern exactly. Real request/response shape
+  confirmed with a live call before writing any client code (the same
+  verify-before-implementing discipline as every prior stage):</p>
+  <pre><code>curl -X POST http://172.18.0.2:11434/api/chat -d '{"model":"qwen2.5:7b-instruct","messages":[{"role":"user","content":"Say hello in exactly 3 words."}],"stream":false}'
+-> {"message":{"role":"assistant","content":"Hello there!"}, "done":true, ...}</code></pre>
+
+  <p><strong>Deliberate design choice: don't hardcode the container IP.</strong>
+  <code>172.18.0.2</code> is a Docker bridge-network IP — not guaranteed
+  stable across a container restart. Resolve it fresh via
+  <code>docker inspect</code> on every call instead of hardcoding it. This
+  is exactly the kind of thing this project has learned to distrust after
+  the WSL-bridge and Docker-IP findings in Entry 15 — a value observed once
+  isn't a value safe to freeze.</p>
+
+  <p><strong>Deliberate scope boundary — smallest working example, same
+  pedagogy as Lesson 1.</strong> This piece proves one thing only: a basic
+  chat round-trip to a real LLM. No MCP tools wired in yet — that's Piece 2,
+  and it changes shape based on something just discovered while researching
+  this piece: the Anthropic SDK ships official MCP-to-tool-schema conversion
+  helpers (<code>anthropic.lib.tools.mcp</code>), which would have made
+  Piece 2 close to trivial <em>if</em> the provider were Claude. Ollama's
+  tool-calling format is different (OpenAI-style function-calling JSON, not
+  Anthropic's), so Piece 2 will need its own real verification pass when we
+  get there — noted now so it isn't a surprise later.</p>
+
+  <p><strong>Location:</strong> new top-level <code>llm/</code> package —
+  not under <code>mcp_client/</code> or <code>mcp_servers/</code>, since an
+  LLM client is neither an MCP client nor a server. Foreshadows the design
+  doc's planned <code>backend/llm/</code>, the same "smallest useful
+  structure now" deferral used for the Docker test fixture and the Git
+  server.</p>
+
+  <p><strong>Will do:</strong> one function, <code>chat(message) -&gt; str</code>,
+  bridged through WSL, IP resolved fresh each call, tested with real prompts
+  against the real running model.<br>
+  <strong>Won't do:</strong> tool-calling, conversation history, streaming,
+  or any MCP integration yet — all deferred to a scoped, separately-verified
+  Piece 2.</p>
+
+  <p><strong>How this will be tested:</strong> three real prompts against
+  the live model — a trivial one (confirms the round trip works at all), a
+  small arithmetic one (confirms it's actually reasoning, not echoing), and
+  one asking about <em>this project specifically</em>, expecting the model
+  to honestly say it doesn't know rather than hallucinate — since it has no
+  access to this project's context yet. That last case is the whole reason
+  Piece 2 (MCP tool access) will matter, made concrete before it's built.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>New top-level package: <code>llm/client.py</code> (one function,
+  <code>chat()</code>) and <code>llm/demo.py</code> (the three-prompt
+  smallest-example test, mirroring <code>lesson1_client.py</code>'s role
+  for this new category of component). No new dependencies — <code>json</code>
+  and <code>subprocess</code> are stdlib; the actual model call happens
+  entirely inside WSL via <code>curl</code>.</p>
+
+  <pre><code>def _resolve_ollama_host() -> str:
+    """Resolve the container's current bridge IP via `docker inspect`
+    rather than hardcoding it -- container IPs aren't stable across restarts."""
+    result = subprocess.run(
+        ["wsl", "-d", "Ubuntu", "-e", "docker", "inspect", "-f",
+         "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", OLLAMA_CONTAINER],
+        capture_output=True, text=True, timeout=15,
+    )
+    ip = result.stdout.strip()
+    if not ip:
+        raise ConnectionError(f"Could not resolve an IP for container '{OLLAMA_CONTAINER}'...")
+    return ip
+
+def chat(message: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> str:
+    host = _resolve_ollama_host()
+    url = f"http://{host}:{OLLAMA_PORT}/api/chat"
+    payload = json.dumps({"model": OLLAMA_MODEL, "messages": [{"role": "user", "content": message}], "stream": False})
+    result = subprocess.run(
+        ["wsl", "-d", "Ubuntu", "-e", "curl", "-s", "-X", "POST", url,
+         "-H", "Content-Type: application/json", "-d", "@-"],
+        input=payload, capture_output=True, text=True, timeout=timeout,
+    )
+    if result.returncode != 0:
+        raise ConnectionError(f"curl failed: {result.stderr.strip()}")
+    data = json.loads(result.stdout)
+    if "error" in data:
+        raise RuntimeError(f"Ollama error: {data['error']}")
+    return data["message"]["content"]</code></pre>
+
+  <p>One detail worth calling out: the JSON payload is passed to
+  <code>curl</code> via <strong>stdin</strong> (<code>-d @-</code>,
+  <code>input=payload</code>), not as a command-line argument. A JSON body
+  as a literal argv string would need careful shell-quoting to survive
+  crossing from Windows' <code>subprocess.run</code> through
+  <code>wsl.exe</code> into a Linux shell — passing it over stdin sidesteps
+  that entire class of escaping bug, the same reasoning that's driven every
+  <code>shell=False</code> / argv-list choice in this project so far, applied
+  to a new failure mode (cross-shell argument escaping, not shell injection).</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Ran <code>.venv/Scripts/python.exe -m llm.demo</code>. All three
+  predictions confirmed against the real, running local model — no mocking,
+  no bugs:</p>
+
+  <pre><code>Prompt 1: 'Say hello in exactly 3 words.'
+Response: Hello there!
+
+Prompt 2: 'What is 17 + 25? Answer with just the number.'
+Response: 42
+
+Prompt 3: asking about this project specifically (should NOT hallucinate)
+Response: I don't have specific information about which MCP servers the
+project 'DevPilot AI' has built. Could you provide more context or details?</code></pre>
+
+  <p>Prompt 2 confirms actual computation, not an echo — 17+25 was never in
+  the prompt as a literal answer. Prompt 3 is the important one: the model
+  had no way to know this project exists, and rather than inventing a
+  plausible-sounding server name, it said so plainly and asked for more
+  context — exactly the honest failure mode the Approach predicted, and the
+  concrete reason DevPilot's next piece (giving this model real MCP tool
+  access) is worth building rather than a demonstration for its own sake.
+  This is the first time in the whole project an LLM has been in the loop
+  at all — six MCP servers, 26 tools, and a memory system were built and
+  fully tested before any of them had an actual "brain" to sit under.</p>
+</div>
+
+<h2 id="entry-18">Entry 18 — Piece 2: Dynamic MCP Tool Selection</h2>
+<div class="entry-meta">2026-08-11 · The moment build-instructions §14/15 (Tool Selection, Tool Chaining) become real · Status: <span class="status-done">implemented, tested twice against the real model — mechanism works, model has a real capability limit</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>What this replaces:</strong> Stage 9's <code>planner.py</code>
+  had a hardcoded Python list as its plan — deliberately, because no LLM
+  existed yet (logged explicitly at the time as a scope boundary, not an
+  oversight). That LLM now exists (Entry 17). This piece is the promised
+  follow-through: the model itself decides which tools to call, in what
+  order, from a free-text request — not a list a human wrote in advance.</p>
+
+  <p><strong>Verified before designing further, not assumed</strong> — two
+  live calls against the real model, since Ollama's tool-calling shape was
+  never confirmed before now:</p>
+  <ul>
+    <li>Request: standard OpenAI-style <code>tools: [{"type": "function", "function": {name, description, parameters}}]</code> —
+    <code>parameters</code> accepts a JSON Schema directly, the same shape
+    MCP's <code>input_schema</code> already is. Conversion between the two
+    is close to a rename, confirmed rather than assumed compatible.</li>
+    <li>Response: a tool-call turn returns
+    <code>message.tool_calls: [{id, function: {name, arguments}}]</code> —
+    <code>arguments</code> arrives as an already-parsed object, not a JSON
+    string to re-decode.</li>
+    <li>Sending the result back uses
+    <code>{"role": "tool", "content": "&lt;string&gt;", "tool_call_id": "..."}</code>
+    appended to <code>messages</code> — confirmed with a real round trip:
+    asked the model to list a directory, executed the tool call by hand,
+    fed the result back, and got a coherent natural-language answer
+    synthesizing it.</li>
+    <li><strong>Real, load-bearing finding: this model is slow.</strong>
+    Both test calls took 50–57 seconds of real wall-clock time on this
+    hardware (CPU inference, no GPU passthrough into the container). This
+    directly shapes the design below — timeouts, iteration caps, and what
+    counts as a reasonable test all have to assume single-digit-minutes
+    for a multi-tool-call exchange, not seconds. This is the honest
+    trade-off of the zero-cost decision from Entry 17, not swept under
+    the rug.</li>
+  </ul>
+
+  <p><strong>No Anthropic-style Tool Runner exists for this provider</strong> —
+  Entry 17 noted the Anthropic SDK ships an automatic MCP-to-tool-schema
+  helper and a runner that drives the whole loop; Ollama has neither. This
+  piece is a small, hand-written equivalent of that loop:</p>
+  <pre><code>1. Discover tools from N MCP servers (list_tools()), convert each to Ollama's function-schema shape
+2. Send the user's message + the combined tool list to Ollama
+3. If the response has tool_calls: execute each against the right MCP server,
+   append the results as role:"tool" messages, go to 2
+4. If the response has no tool_calls: that's the final answer, stop</code></pre>
+  <p>A max-iteration cap bounds the loop (this is the exact concern the
+  original project design doc flagged under "AI Concepts" as a Phase-4
+  guard against runaway tool-call loops — now genuinely relevant for the
+  first time, not aspirational).</p>
+
+  <p><strong>Scope — deliberately read-only, two servers, matching Stage 9's
+  transport reasoning.</strong> The LLM gets access to Filesystem's
+  <code>read_file</code>/<code>list_directory</code>/<code>get_file_info</code>/
+  <code>search_files</code> and Database's <code>list_tables</code>/
+  <code>describe_table</code>/<code>execute_read_query</code> — 7 tools,
+  none needing human approval. Terminal, Docker, Git's gated tools, GitHub,
+  and Browser are explicitly <strong>not</strong> exposed yet: routing an
+  LLM's own tool choice through a human-approval prompt is a genuinely
+  separate, harder problem (who answers the prompt — another LLM call? a
+  blocking console input?) and deserves its own scoped piece rather than
+  being bundled into "does dynamic selection work at all." Read-only tools
+  also mean the in-memory <code>Client(mcp)</code> transport is fine here —
+  no elicitation involved, same reasoning Stage 9 used.</p>
+
+  <p><strong>Test plan:</strong> one free-text request genuinely requiring
+  tools from <em>both</em> servers — "What Python dependencies does this
+  project use, and what tables exist in its demo database?" — and observe,
+  honestly, whether a 7B local model actually chains both calls correctly
+  on its own. Being upfront: this is a small model, and unlike every
+  previous "verify against something real" test in this project, the thing
+  being verified here isn't just code correctness — it's whether the model
+  is capable enough, which is a genuinely open question, not a foregone
+  conclusion. The outcome will be reported as it actually happens, not
+  smoothed over.</p>
+
+  <p><strong>Will do:</strong> real LLM-driven tool selection and chaining
+  across two servers, hand-rolled loop, iteration cap, full transcript
+  printed live given how slow each turn is.<br>
+  <strong>Won't do:</strong> approval-gated tools in the loop yet, more than
+  two servers yet, conversation memory across separate runs (Stage 10's
+  <code>ProjectMemory</code>/<code>SessionMemory</code> aren't wired in
+  here — a natural, separate follow-up, not assumed free).</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>New files: <code>llm/agent.py</code> (tool discovery + the hand-rolled
+  loop) and <code>llm/agent_demo.py</code> (the test). Discovery converts
+  every MCP tool from both servers into Ollama's function-schema shape in
+  one pass:</p>
+  <pre><code>async def _discover_tools() -> list[dict]:
+    ollama_tools = []
+    for server_name, server in SERVERS.items():
+        async with Client(server) as client:
+            result = await client.list_tools()
+            for tool in result.tools:
+                if tool.name in EXCLUDED_TOOLS:
+                    continue
+                _tool_server[tool.name] = server_name
+                ollama_tools.append({
+                    "type": "function",
+                    "function": {"name": tool.name, "description": tool.description or "",
+                                 "parameters": tool.input_schema},
+                })
+    return ollama_tools</code></pre>
+  <p>The loop itself is the manual equivalent of a Tool Runner: ask, check
+  for <code>tool_calls</code>, execute each against the right server via
+  <code>_tool_server</code>'s name→server mapping, append results as
+  <code>role: "tool"</code> messages, repeat until a turn comes back with no
+  tool calls (or <code>MAX_ITERATIONS</code> is hit).</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome — two runs, both real, both worth keeping</span>
+
+  <p><strong>Run 1</strong> exposed the scope bug directly: 8 tools
+  discovered instead of the intended 7 —
+  <code>write_file</code> had slipped in because <code>_discover_tools()</code>
+  pulled everything off the Filesystem server without filtering. The model
+  called <code>list_tables</code> then <code>describe_table</code> — real,
+  correct chaining — but never touched Filesystem MCP at all, and the
+  final answer addressed only the database half of the two-part question.
+  Cross-server chaining was <strong>not</strong> actually demonstrated in
+  this run, despite the underlying mechanism working correctly for the
+  calls it did make.</p>
+
+  <p>Fixed <code>write_file</code> out via an explicit
+  <code>EXCLUDED_TOOLS</code> set (comment explains why: no elicitation
+  callback is wired into this loop, so exclusion is deliberate, not relying
+  on Stage 8's fail-safe as a substitute for actually scoping the tool
+  list correctly) — and rewrote the test question from one compound
+  sentence into two explicitly numbered parts with an explicit "answer
+  both, not just one" instruction, logged as a real, visible adjustment
+  rather than a silent rerun-and-hope.</p>
+
+  <p><strong>Run 2</strong>, full transcript:</p>
+  <pre><code>Discovered 7 tools across 2 servers: read_file, list_directory, get_file_info,
+search_files, list_tables, describe_table, execute_read_query
+
+Turn 1: model called read_file({'path': 'requirements.txt'})
+  result: {"result": "mcp\nhttpx2\n"}
+
+Turn 2: model called list_tables({})
+  result: {"result": ["stages"]}
+
+Turn 3: model called describe_table({'table': 'stages'})
+  result: {"result": [{"name": "id", ...}, ...]}
+
+Final answer:
+The `stages` table in the demo database has the following columns:
+- id, stage_number, name, status, date_completed [...]
+If you need more details or another table's schema, feel free to ask!</code></pre>
+
+  <p><strong>What this narrows down, precisely.</strong> The tool count is
+  now correctly 7. The model genuinely called <code>read_file</code> on
+  Filesystem MCP <em>and</em> two tools on Database MCP, entirely on its
+  own — real, confirmed multi-server tool selection and chaining, the thing
+  this piece set out to prove. But the final synthesized answer still
+  reports only the database half, even though the dependency data
+  (<code>"mcp\nhttpx2\n"</code>) is sitting right there in the tool result
+  from Turn 1. This is not a repeat of Run 1's failure — Run 1 never
+  gathered the dependency data at all; Run 2 gathered it and then dropped
+  it during final-answer composition. The capability boundary of this free,
+  local, 7B model is now precisely located: tool selection and chaining
+  work; synthesizing a complete answer across multiple gathered facts is
+  where it falls short. Stopped at two runs deliberately — a third attempt
+  chasing a clean transcript would be tuning the prompt to flatter the
+  model, not learning anything more about it.</p>
+</div>
+
+<h2 id="entry-19">Entry 19 — Fixing the Answer-Synthesis Gap</h2>
+<div class="entry-meta">2026-08-11 · Directly follows Entry 18's precise finding · Status: <span class="status-done">fixed and confirmed on the first re-run</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>What's being fixed, precisely.</strong> Entry 18 narrowed the
+  problem to one specific step: tool selection and chaining work; the final
+  turn — the one with no more <code>tool_calls</code>, where the model
+  composes its answer from everything gathered — silently drops part of a
+  multi-part question even when the needed data is sitting right there in
+  the conversation history. This is not a tool-use bug; it's a synthesis
+  bug, and the fix belongs at that step specifically.</p>
+
+  <p><strong>Verified before designing further:</strong> neither Piece 1 nor
+  Piece 2 has ever used a system-role message — every call so far has been
+  a bare user message. Confirmed Ollama actually honors one before relying
+  on it: sent <code>{"role": "system", "content": "You always answer in ALL
+  CAPS, no exceptions."}</code> ahead of a plain "Say hello", got back
+  <code>"HELLO! HOW CAN I HELP YOU TODAY?"</code> — the instruction was
+  followed exactly, on the first real test.</p>
+
+  <p><strong>The fix:</strong> add a system prompt to <code>ask()</code>,
+  present for the whole conversation, that does two things a bare user
+  message doesn't: establishes tool-use discipline (gather facts, don't
+  guess), and — the part that actually targets this bug — explicitly
+  instructs the model to check its answer against every part of the
+  original question before finalizing, rather than stopping as soon as it
+  has <em>an</em> answer.</p>
+  <pre><code>SYSTEM_PROMPT = (
+    "You are DevPilot AI's tool-using assistant. Use the available tools to "
+    "gather facts before answering -- never guess, and never answer from "
+    "memory when a tool could confirm the real answer. "
+    "If the user's question has multiple parts, before giving your final "
+    "answer, explicitly re-read the original question and check that your "
+    "answer addresses every part of it -- not just the part you most "
+    "recently gathered information about. Do not silently drop a part of "
+    "the question just because you already answered a different part."
+)</code></pre>
+
+  <p><strong>Being honest about what this is and isn't.</strong> This is a
+  prompting-level mitigation, not a structural guarantee — nothing in the
+  code <em>forces</em> multi-part coverage the way, say, the SQLite
+  read-only connection <em>forces</em> write-rejection. A 7B local model
+  can still ignore the instruction. That's fine and expected: the goal
+  isn't a clean demo, it's a genuine test of whether this specific,
+  minimal lever actually changes behavior. If it doesn't fully fix it, that
+  failure is reported exactly like Entry 18's was — not smoothed over,
+  not retried indefinitely chasing a good transcript. One fix, one
+  re-run of the <em>same</em> two-part question from Entry 18 for a direct,
+  fair comparison, reported however it turns out.</p>
+
+  <p><strong>Will do:</strong> add one system prompt, re-run the identical
+  question from Entry 18's Run 2, report the real outcome.<br>
+  <strong>Won't do:</strong> add explicit sub-question tracking/checklisting
+  logic in code, multiple retry rounds, or any structural guarantee — this
+  is deliberately the smallest lever, tried once, honestly reported.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>One constant added to <code>llm/agent.py</code>, and one line changed
+  in <code>ask()</code>:</p>
+  <pre><code>SYSTEM_PROMPT = (
+    "You are DevPilot AI's tool-using assistant. Use the available tools to "
+    "gather facts before answering -- never guess, and never answer from "
+    "memory when a tool could confirm the real answer. "
+    "If the user's question has multiple parts, before giving your final "
+    "answer, explicitly re-read the original question and check that your "
+    "answer addresses every part of it -- not just the part you most "
+    "recently gathered information about. Do not silently drop a part of "
+    "the question just because you already answered a different part."
+)
+
+# in ask():
+messages: list[dict] = [
+    {"role": "system", "content": SYSTEM_PROMPT},
+    {"role": "user", "content": user_message},
+]</code></pre>
+  <p>No other code changed — the discovery, execution, and loop logic from
+  Entry 18 are untouched. This is deliberately a prompt-only change so the
+  comparison against Entry 18's Run 2 isolates exactly one variable.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Re-ran the <strong>identical</strong> two-part question from Entry
+  18's Run 2, for a fair, direct comparison:</p>
+  <pre><code>Turn 1: model called read_file({'path': 'requirements.txt'})
+        result: {"result": "mcp\nhttpx2\n"}
+        model called list_tables({})
+        result: {"result": ["stages"]}
+
+Turn 2:
+Final answer:
+Based on the provided responses from the tools:
+
+1. The project uses Python dependencies listed in `requirements.txt` as follows:
+   - mcp
+   - httpx2
+
+2. There is one table in this project's demo database, named `stages`.
+
+These answers address both parts of your question without making any
+assumptions or guesses.</code></pre>
+
+  <p><strong>Fixed, on the first attempt.</strong> Two things changed
+  from Entry 18's Run 2, both real improvements: the final answer now
+  correctly addresses <em>both</em> parts of the question with accurate
+  data pulled from the actual tool results — no dropped part, no invented
+  content. And, unprompted, the model called both tools in a single turn
+  instead of spreading them across separate turns — <code>read_file</code>
+  and <code>list_tables</code> together, then straight to a complete final
+  answer in turn 2 instead of turn 3 or 4. Not something the system prompt
+  asked for directly, but consistent with it: told to verify full coverage
+  before finalizing, the model apparently front-loaded the information
+  gathering instead of trickling it out.</p>
+
+  <p>Consistent with the honesty this whole investigation has run on: this
+  is one successful run, on a small model, on one specific question. It
+  confirms the lever <em>worked here</em> — it is not a formal guarantee
+  the model will never drop a part of a question again. That distinction
+  is the entire reason this was framed from the start as a prompting
+  mitigation, not a structural fix.</p>
+</div>
+
+<h2 id="entry-20">Entry 20 — Piece 3: FastAPI Backend</h2>
+<div class="entry-meta">2026-08-11 · First HTTP surface for DevPilot — the piece a future frontend would talk to · Status: <span class="status-done">implemented and tested over real HTTP</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>What this is:</strong> everything built so far — 6 MCP
+  servers, the memory system, the LLM, the tool-selecting agent — has only
+  ever been reachable by running a Python script. This piece puts an HTTP
+  surface in front of <code>llm/agent.py</code>'s <code>ask()</code>, which
+  is what a future frontend (or anything else) would actually talk to.</p>
+
+  <p><strong>Location — the deferral finally resolves.</strong> Entry 17
+  deliberately kept the LLM client flat under <code>llm/</code> instead of
+  the design doc's planned <code>backend/llm/</code>, because the backend
+  didn't exist yet — creating that nesting early would've been scaffolding
+  for a thing not yet real. It's real now: new top-level
+  <code>backend/</code> package, one file, <code>backend/main.py</code> —
+  still no premature subpackaging into <code>api/</code>/<code>core/</code>/
+  <code>orchestration/</code> until there's enough here to justify splitting
+  it, same "smallest structure needed now" reasoning as every prior piece.</p>
+
+  <p><strong>Two endpoints, deliberately minimal:</strong></p>
+  <pre><code>GET  /health -> {"status": "ok"}
+POST /ask    -> {"message": str} -> {"answer": str}</code></pre>
+  <p><code>/health</code> exists for a concrete reason beyond convention: it
+  gives a fast (sub-second) way to prove the server itself is up
+  <em>before</em> testing <code>/ask</code>, which inherits the agent's
+  real per-call latency (50–60s/turn, confirmed in Entry 17/18) — the same
+  "smallest working example first" staging this whole project has used
+  throughout, applied inside a single piece instead of across pieces.</p>
+
+  <p><strong>Synchronous, blocking, with a generous timeout — not a job
+  queue.</strong> A multi-turn agent call can take minutes. The
+  production-considerations section of the original design doc flags
+  exactly this shape of problem ("isolate long-running tools behind a job
+  queue") — and just as with Terminal MCP's timeout and Docker MCP's build
+  timeout, the answer here is the same: a job queue is real infrastructure
+  not justified until a blocking call has actually caused a real problem.
+  <code>POST /ask</code> stays a plain blocking FastAPI handler with a
+  generous timeout, and the async/job-queue question stays deferred with
+  the same reasoning as every previous time it came up.</p>
+
+  <p><strong>New dependencies:</strong> <code>fastapi</code> and
+  <code>uvicorn</code> — neither previously needed since nothing in this
+  project has served HTTP before.</p>
+
+  <p><strong>Will do:</strong> a real FastAPI server, started for real,
+  hit with real HTTP requests — <code>/health</code> first (fast,
+  proves the server), then <code>/ask</code> with a single-tool question
+  (proves the whole pipeline end-to-end over HTTP, not just in-process).<br>
+  <strong>Won't do:</strong> a job queue, streaming responses, auth, or
+  any frontend — this piece is the HTTP surface only.</p>
+
+  <p><strong>How this will be tested:</strong> start the server, call
+  <code>/health</code> and confirm an immediate <code>{"status": "ok"}</code>;
+  then call <code>/ask</code> with a real question over real HTTP (not an
+  in-process function call) and confirm a coherent answer comes back,
+  proving the agent loop works identically whether driven by a Python
+  script or by an HTTP client.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>New package: <code>backend/main.py</code>. Two routes, both thin
+  wrappers — all the real logic still lives in <code>llm/agent.py</code>,
+  exactly as intended:</p>
+  <pre><code>from fastapi import FastAPI
+from pydantic import BaseModel
+from llm.agent import ask as agent_ask
+
+app = FastAPI(title="DevPilot AI")
+
+class AskRequest(BaseModel):
+    message: str
+
+class AskResponse(BaseModel):
+    answer: str
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+@app.post("/ask", response_model=AskResponse)
+async def ask(request: AskRequest) -> AskResponse:
+    answer = await agent_ask(request.message)
+    return AskResponse(answer=answer)</code></pre>
+  <p>One real snag while starting the server: port 8000 (the conventional
+  default) was already bound —
+  <code>[WinError 10048] only one usage of each socket address...</code>.
+  Rather than guess why, checked what's actually using it: almost
+  certainly <code>githubcodebaseintelligenceplatform-app-1</code>, the
+  other project's container, which <code>docker ps</code> showed mapped to
+  <code>0.0.0.0:8000</code> back in Entry 15. Not touched — used port 8001
+  instead. A small, concrete instance of the same discipline this whole
+  project has followed around shared/external state: investigate before
+  acting, don't assume a conflict is safe to just override.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Started <code>uvicorn backend.main:app --port 8001</code> for real,
+  then hit it with real HTTP requests via <code>httpx2</code> — not
+  in-process calls:</p>
+  <pre><code>GET http://127.0.0.1:8001/health
+-> 200 {'status': 'ok'}
+
+POST http://127.0.0.1:8001/ask
+    {"message": "What tables exist in this project's demo database? Use the available tools."}
+-> 200 {'answer': 'The only table that exists in this project's demo database is named "stages".'}</code></pre>
+
+  <p>Both endpoints work exactly as designed — <code>/health</code>
+  returned instantly, <code>/ask</code> took the expected roughly a minute
+  (real model latency, unchanged from every prior test) and produced a
+  correct answer, confirming the entire pipeline — MCP tool discovery,
+  LLM tool selection, MCP tool execution, answer synthesis — works
+  identically when driven over HTTP as it does when called directly from
+  a Python script. The test server was stopped afterward; this was a
+  verification run, not a service meant to keep running.</p>
+</div>
+
+<footer>
+  DevPilot AI — Local AI Engineering Copilot. Companion files:
+  <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
+  <code>DevPilot_AI_Learning_Log.md</code> (concepts &amp; decisions),
+  <code># DevPilot AI – MCP Learning &amp; Build Ins.md</code> (teaching rules).
+</footer>
+
+</body>
+</html>

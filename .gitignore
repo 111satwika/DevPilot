@@ -1,0 +1,14 @@
+# Virtual environment
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Generated/mutable local state -- not source, regenerated on first run
+mcp_servers/database/devpilot_demo.db
+mcp_client/memory/project_memory.json
+
+# Secrets -- never commit these, even if one shows up locally later
+.env
+*.env
