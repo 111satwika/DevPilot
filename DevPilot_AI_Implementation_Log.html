@@ -141,6 +141,7 @@ and exactly what was done.</p>
     <li><a href="#entry-18">Entry 18 — Piece 2: Dynamic MCP tool selection</a></li>
     <li><a href="#entry-19">Entry 19 — Fixing the answer-synthesis gap</a></li>
     <li><a href="#entry-20">Entry 20 — Piece 3: FastAPI backend</a></li>
+    <li><a href="#entry-21">Entry 21 — Piece 4: React frontend</a></li>
   </ol>
 </nav>
 
@@ -3113,6 +3114,162 @@ POST http://127.0.0.1:8001/ask
   identically when driven over HTTP as it does when called directly from
   a Python script. The test server was stopped afterward; this was a
   verification run, not a service meant to keep running.</p>
+</div>
+
+<h2 id="entry-21">Entry 21 — Piece 4: React Frontend</h2>
+<div class="entry-meta">2026-08-11 · The biggest remaining piece from the original "what's not done" list · Status: <span class="status-done">implemented and driven live in a real browser</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Environment check performed first, same discipline as
+  Postgres/Docker/<code>ant</code>:</strong> confirmed Node v22.23.2 and
+  npm 10.9.8 are actually installed here before planning anything — no gap
+  this time, unlike those three.</p>
+
+  <p><strong>Scope, against the build-instructions file's own mockup
+  (§23).</strong> That mockup shows three things: a conversation panel, a
+  live "Tool Execution" checklist, and an input box. The first and third
+  are trivial given <code>POST /ask</code> already exists. The second
+  needs something new — <code>/ask</code> currently returns only
+  <code>{"answer": str}</code>; the tool-call trace <code>agent.py</code>
+  already prints to the console during the loop was never returned to the
+  caller. Worth building, not skipping: it's not decoration, it's the same
+  transparency principle this entire log has been built on — showing what
+  the AI actually did, not just its final words — now surfaced to an
+  actual UI instead of only a terminal.</p>
+
+  <p><strong>Small, necessary backend change first</strong> (frontend work
+  depends on it, so it comes first even though this piece is "the
+  frontend"):</p>
+  <pre><code># llm/agent.py
+@dataclass
+class AgentResult:
+    answer: str
+    tool_calls: list[dict]   # [{"name", "arguments", "result"}, ...]
+
+async def ask(user_message: str) -> AgentResult: ...   # was -> str
+
+# backend/main.py
+class AskResponse(BaseModel):
+    answer: str
+    tool_calls: list[dict]</code></pre>
+  <p><code>agent_demo.py</code> updates to read <code>.answer</code> off
+  the result instead of treating it as a bare string — the one existing
+  caller this change touches.</p>
+
+  <p><strong>CORS — the first time this project's API is reachable from a
+  browser origin, and the first time that's a real access-control
+  decision.</strong> The Vite dev server runs on a different origin
+  (<code>localhost:5173</code>) than the backend
+  (<code>localhost:8001</code>); browsers block cross-origin
+  <code>fetch</code> by default. The fix is <code>CORSMiddleware</code>,
+  scoped explicitly to the dev frontend's origin — not a wildcard
+  <code>allow_origins=["*"]</code>, same "don't over-permission" instinct
+  behind every allow-list and sandbox check so far in this project, applied
+  to a new kind of boundary.</p>
+
+  <p><strong>Frontend stack:</strong> React + TypeScript via Vite, matching
+  the build-instructions file's own tech-stack line exactly (§4: "React +
+  TypeScript... Keep the frontend simple initially"). New top-level
+  <code>frontend/</code>, resolving the last folder-structure deferral in
+  the original design doc.</p>
+
+  <p><strong>UI scope — deliberately minimal, matching the mockup, nothing
+  beyond it:</strong> one page, an input box + Send button, a scrolling
+  conversation view, and — under each AI turn — the list of tools it
+  called. <strong>The loading state matters more here than in a typical
+  chat UI</strong>: every prior test in this project has shown real
+  per-question latency of 1–3 minutes on this model. A UI that just looks
+  frozen for three minutes reads as broken even though nothing is wrong —
+  so an explicit "DevPilot is thinking… this can take a few minutes on
+  local hardware" state is part of the design, not a nice-to-have.</p>
+
+  <p><strong>Will do:</strong> a real, working single-page chat UI backed
+  by the real FastAPI/agent/MCP pipeline, tool trace included, tested live
+  in an actual browser per this project's own "verify UI changes in a
+  browser, don't just claim it works" standard.<br>
+  <strong>Won't do:</strong> streaming (the tool trace arrives with the
+  final response, not incrementally — SSE/WebSockets would be a real,
+  separate piece), auth, multi-conversation history, or styling beyond
+  "clean and legible."</p>
+
+  <p><strong>How this will be tested:</strong> start the backend (port
+  8001, avoiding the port-8000 conflict discovered in Entry 20) and the
+  Vite dev server, then actually drive it in a browser with a real,
+  fast single-tool question — not just a code review — confirming the
+  full path: browser → CORS-permitted fetch → FastAPI → agent loop → MCP
+  tool call → rendered answer and tool trace.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>New top-level <code>frontend/</code>, scaffolded with
+  <code>npm create vite@latest frontend -- --template react-ts</code> — Node
+  v22.23.2 confirmed available first, per the Approach. One component,
+  <code>App.tsx</code>: an input box, a scrolling conversation view, and a
+  tool-trace block under each AI turn, matching the build-instructions
+  mockup's structure without adding anything beyond it.</p>
+
+  <p>Backend changes that made the trace possible —
+  <code>llm/agent.py</code>'s <code>ask()</code> now returns a small
+  dataclass instead of a bare string:</p>
+  <pre><code>@dataclass
+class AgentResult:
+    answer: str
+    tool_calls: list[dict] = field(default_factory=list)
+
+async def ask(user_message: str) -> AgentResult:
+    ...
+    trace: list[dict] = []
+    for iteration in range(1, MAX_ITERATIONS + 1):
+        ...
+        for call in tool_calls:
+            ...
+            trace.append({"name": name, "arguments": args, "result": result_text})
+    return AgentResult(answer=..., tool_calls=trace)</code></pre>
+  <p><code>backend/main.py</code>'s <code>AskResponse</code> grew a
+  <code>tool_calls</code> field to carry it over HTTP, and
+  <code>CORSMiddleware</code> was added, scoped to exactly
+  <code>http://localhost:5173</code> — the Vite dev server's origin, not a
+  wildcard.</p>
+
+  <p><strong>Real snag while verifying in a browser</strong> (this project
+  has no <code>chromium-cli</code>, so the fallback path from the
+  <code>run</code> skill's own guidance was used: a small Playwright
+  driver script). First attempt failed outright —
+  <code>Executable doesn't exist at ...chromium_headless_shell-1234\...</code> —
+  the newly-installed <code>playwright</code> npm package expected a
+  browser build that wasn't the one already cached locally. Fixed with
+  <code>npx playwright install chromium</code> (a real download, ~300MB,
+  not a config error) rather than assuming the cached binary would match
+  whatever version npm resolved.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Backend on 8001, Vite dev server on 5173, driven with a real headless
+  Chromium session — not a code review, an actual browser loading the
+  actual page. Full transcript:</p>
+  <pre><code>Screenshot 1 taken: page loaded
+Screenshot 2 taken: thinking state shown
+Screenshot 3 taken: answer + tool trace rendered
+Rendered answer text: The demo database in this project contains one table
+named `stages`. Tools used: check list_tables({})</code></pre>
+
+  <p>Both screenshots were actually looked at, not just trusted from the
+  text log — per the <code>run</code> skill's own explicit warning that a
+  page can render its shell while every real interaction underneath still
+  fails. Screenshot 1 shows the empty-state chat UI rendering cleanly.
+  Screenshot 3 shows the full real path working: the user's question
+  bubble, the AI's answer bubble, and underneath it a "TOOLS USED" section
+  with a green checkmark and <code>list_tables({})</code> — the exact
+  tool the agent actually called, fetched from a real HTTP response, not
+  hardcoded UI content. This confirms the complete chain end-to-end:
+  browser → CORS-permitted <code>fetch</code> → FastAPI → agent loop →
+  MCP tool call → SQLite → back up through every layer → rendered pixels.</p>
 </div>
 
 <footer>

@@ -23,11 +23,12 @@ async def main() -> None:
     )
     print(f"Question: {question}\n")
 
-    answer = await ask(question)
+    result = await ask(question)
 
     print("\n" + "=" * 60)
     print("Final answer:")
-    print(answer)
+    print(result.answer)
+    print("\nTools called:", [call["name"] for call in result.tool_calls])
 
 
 if __name__ == "__main__":

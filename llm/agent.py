@@ -14,10 +14,15 @@ Entry 19: added a system prompt after testing showed the model could
 select and chain tools correctly but still drop part of a multi-part
 question during final-answer synthesis. Prompting-level mitigation only,
 tried once, not a structural guarantee -- see Entry 19 for why.
+
+Entry 21: ask() now returns AgentResult (answer + tool_calls) instead of a
+bare string, so the frontend can render a tool-execution trace -- the
+trace already existed as console prints, this just surfaces it to callers.
 """
 
 import json
 import subprocess
+from dataclasses import dataclass, field
 
 from mcp import Client
 
@@ -49,6 +54,12 @@ SERVERS = {"filesystem": filesystem_mcp, "database": database_mcp}
 EXCLUDED_TOOLS = {"write_file"}
 
 _tool_server: dict[str, str] = {}
+
+
+@dataclass
+class AgentResult:
+    answer: str
+    tool_calls: list[dict] = field(default_factory=list)
 
 
 def _resolve_ollama_host() -> str:
@@ -136,7 +147,7 @@ async def _call_mcp_tool(name: str, arguments: dict) -> str:
     return result.content[0].text
 
 
-async def ask(user_message: str) -> str:
+async def ask(user_message: str) -> AgentResult:
     """Ask the agent something. It decides which tools (if any) to call."""
     tools = await _discover_tools()
     print(
@@ -148,6 +159,7 @@ async def ask(user_message: str) -> str:
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_message},
     ]
+    trace: list[dict] = []
 
     for iteration in range(1, MAX_ITERATIONS + 1):
         print(f"\n--- Turn {iteration}: asking the model (can take ~1 min on this hardware) ---")
@@ -155,7 +167,7 @@ async def ask(user_message: str) -> str:
 
         tool_calls = message.get("tool_calls")
         if not tool_calls:
-            return message.get("content", "")
+            return AgentResult(answer=message.get("content", ""), tool_calls=trace)
 
         messages.append(message)
         for call in tool_calls:
@@ -164,8 +176,11 @@ async def ask(user_message: str) -> str:
             print(f"  -> model called {name}({args})")
             result_text = await _call_mcp_tool(name, args)
             print(f"     result: {result_text[:200]}")
+            trace.append({"name": name, "arguments": args, "result": result_text})
             messages.append(
                 {"role": "tool", "content": result_text, "tool_call_id": call.get("id", "")}
             )
 
-    return "(gave up after max iterations without a final answer)"
+    return AgentResult(
+        answer="(gave up after max iterations without a final answer)", tool_calls=trace
+    )
