@@ -13,14 +13,15 @@ DevPilot_AI_Implementation_Log.html Entry 16.
 """
 
 import subprocess
-from pathlib import Path
 
 from pydantic import BaseModel
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import AcceptedElicitation, Context
 
-WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+from mcp_servers.workspace import resolve_workspace_root
+
+WORKSPACE_ROOT = resolve_workspace_root()
 
 ALLOWED_SUBCOMMANDS = {"status", "log", "diff", "branch", "commit", "push", "checkout"}
 DEFAULT_TIMEOUT_SECONDS = 60

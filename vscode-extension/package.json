@@ -1,0 +1,52 @@
+{
+  "name": "devpilot-ai",
+  "displayName": "DevPilot AI",
+  "description": "Local AI engineering copilot, MCP-powered -- a sidebar chat panel scoped to your open workspace folder.",
+  "version": "0.1.0",
+  "publisher": "devpilot-local",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "devpilot",
+          "title": "DevPilot AI",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "devpilot": [
+        {
+          "id": "devpilot.chat",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DevPilot AI",
+      "properties": {
+        "devpilot.installPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the DevPilot AI project's own source (the folder containing backend/, mcp_servers/, .venv/). Required -- a real installed extension lives in VS Code's own extensions folder, which is not this path, so it cannot be guessed."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -p ./ -w"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

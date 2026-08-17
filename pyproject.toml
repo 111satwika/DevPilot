@@ -1,0 +1,34 @@
+[project]
+name = "devpilot-ai"
+version = "0.1.0"
+description = "DevPilot AI -- local AI engineering copilot, MCP-powered"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp",
+    "httpx2",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+]
+
+[project.scripts]
+devpilot = "devpilot_cli:main"
+
+[tool.setuptools]
+py-modules = ["devpilot_cli"]
+packages = [
+    "mcp_servers",
+    "mcp_servers.filesystem",
+    "mcp_servers.terminal",
+    "mcp_servers.docker",
+    "mcp_servers.git",
+    "mcp_servers.github",
+    "mcp_servers.browser",
+    "mcp_servers.database",
+    "llm",
+    "backend",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

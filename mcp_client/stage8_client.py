@@ -19,9 +19,12 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.shared.exceptions import MCPError
 
+from mcp_servers.workspace import forwarded_env
+
 SERVER_PARAMS = StdioServerParameters(
     command=sys.executable,
     args=["-m", "mcp_servers.filesystem.server"],
+    env=forwarded_env(),
 )
 
 

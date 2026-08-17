@@ -7,11 +7,12 @@ DevPilot_AI_Implementation_Log.html Entry 7.
 """
 
 import subprocess
-from pathlib import Path
 
 from mcp.server import MCPServer
 
-WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+from mcp_servers.workspace import resolve_workspace_root
+
+WORKSPACE_ROOT = resolve_workspace_root()
 
 ALLOWED_COMMANDS = {"python", "pip", "pytest", "npm", "git"}
 MAX_TIMEOUT_SECONDS = 120

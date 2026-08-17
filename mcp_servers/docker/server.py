@@ -22,7 +22,9 @@ from pydantic import BaseModel
 from mcp.server import MCPServer
 from mcp.server.mcpserver import AcceptedElicitation, Context
 
-WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+from mcp_servers.workspace import resolve_workspace_root
+
+WORKSPACE_ROOT = resolve_workspace_root()
 
 WSL_DISTRO = "Ubuntu"
 ALLOWED_SUBCOMMANDS = {"ps", "inspect", "logs", "build", "run", "stop"}

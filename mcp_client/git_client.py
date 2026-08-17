@@ -18,9 +18,12 @@ import mcp.types as types
 from mcp import Client, ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from mcp_servers.workspace import forwarded_env
+
 SERVER_PARAMS = StdioServerParameters(
     command=sys.executable,
     args=["-m", "mcp_servers.git.server"],
+    env=forwarded_env(),
 )
 
 
