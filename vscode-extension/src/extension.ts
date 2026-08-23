@@ -176,15 +176,38 @@ async function ensureBackendRunning(
   return healthy ? { status: "ok" } : { status: "timeout" };
 }
 
+// Entry 38: an iframe is a fully separate document from this webview's
+// own -- VS Code injects real --vscode-* CSS variables into THIS
+// document, but they can't cross the iframe boundary automatically.
+// Mirroring VS Code's exact internal color tokens would need a live
+// postMessage bridge (and still be fragile -- those names aren't a
+// stable public contract). The pragmatic bridge: detect the user's
+// actual active theme kind and pass it as a ?theme= query param on the
+// iframe's src; the React app picks between its own two VS-Code-flavored
+// palettes based on that. The loading/error screens below are this
+// webview's OWN document (not inside the iframe), so they use the real
+// --vscode-* variables directly -- no bridging needed there.
+function themeParam(): "dark" | "light" {
+  const kind = vscode.window.activeColorTheme.kind;
+  return kind === vscode.ColorThemeKind.Dark || kind === vscode.ColorThemeKind.HighContrast
+    ? "dark"
+    : "light";
+}
+
 class DevPilotViewProvider implements vscode.WebviewViewProvider {
+  private currentWebviewView: vscode.WebviewView | null = null;
+  private showingIframe = false;
+
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly log: vscode.OutputChannel
   ) {}
 
   async resolveWebviewView(webviewView: vscode.WebviewView): Promise<void> {
+    this.currentWebviewView = webviewView;
     webviewView.webview.options = { enableScripts: true };
     webviewView.webview.html = this.loadingHtml();
+    this.showingIframe = false;
 
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!workspaceFolder) {
@@ -223,21 +246,31 @@ class DevPilotViewProvider implements vscode.WebviewViewProvider {
     }
 
     webviewView.webview.html = this.iframeHtml();
+    this.showingIframe = true;
+  }
+
+  /** Re-render the iframe with the current theme -- called when VS
+   * Code's active color theme changes, so DevPilot updates live instead
+   * of only picking up a new theme on the next panel open. */
+  refreshTheme(): void {
+    if (this.currentWebviewView && this.showingIframe) {
+      this.currentWebviewView.webview.html = this.iframeHtml();
+    }
   }
 
   private loadingHtml(): string {
-    return `<!DOCTYPE html><html><body style="font-family:sans-serif;padding:1rem;">
+    return `<!DOCTYPE html><html><body style="font-family:var(--vscode-font-family);padding:1rem;color:var(--vscode-foreground);">
       <p>Starting DevPilot AI...</p></body></html>`;
   }
 
   private errorHtml(message: string): string {
-    return `<!DOCTYPE html><html><body style="font-family:sans-serif;padding:1rem;color:#d33;">
+    return `<!DOCTYPE html><html><body style="font-family:var(--vscode-font-family);padding:1rem;color:var(--vscode-errorForeground);">
       <p>${message}</p></body></html>`;
   }
 
   private iframeHtml(): string {
     return `<!DOCTYPE html><html><body style="margin:0;padding:0;">
-      <iframe src="http://127.0.0.1:${PORT}/" style="width:100%;height:100vh;border:none;"></iframe>
+      <iframe src="http://127.0.0.1:${PORT}/?theme=${themeParam()}" style="width:100%;height:100vh;border:none;"></iframe>
       </body></html>`;
   }
 }
@@ -249,6 +282,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const provider = new DevPilotViewProvider(context, log);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("devpilot.chat", provider)
+  );
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveColorTheme(() => provider.refreshTheme())
   );
 }
 

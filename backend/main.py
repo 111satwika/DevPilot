@@ -43,6 +43,10 @@ persistent chat history, scoped to the current project. A conversation
 now survives "New conversation" and a backend restart, not just this
 process's lifetime.
 
+Entry 38: /ask accepts an optional mode ("ask"|"plan"|"agent"), passed
+straight through to llm/agent.py's ask() -- see that module for what
+each mode restricts.
+
 Run from the project root: uvicorn backend.main:app --port 8001
 (or just `devpilot` from inside the project you want it to work on --
 Entry 26)
@@ -79,6 +83,7 @@ app.add_middleware(
 class AskRequest(BaseModel):
     message: str
     session_id: str | None = None  # present -> continue that conversation
+    mode: str = "agent"  # "ask" | "plan" | "agent" -- see llm/agent.py
 
 
 class AskAccepted(BaseModel):
@@ -136,11 +141,11 @@ def workspace() -> dict:
 @app.post("/ask", response_model=AskAccepted)
 async def ask(request: AskRequest) -> AskAccepted:
     if request.session_id is None:
-        session = start_session(request.message)
+        session = start_session(request.message, mode=request.mode)
         return AskAccepted(session_id=session.id)
 
     try:
-        session = continue_session(request.session_id, request.message)
+        session = continue_session(request.session_id, request.message, mode=request.mode)
     except KeyError:
         raise HTTPException(status_code=404, detail="Unknown session")
     except SessionNotContinuableError as exc:

@@ -48,6 +48,23 @@ interface ConversationDetail {
   turns: { question: string; answer: string; tool_calls: ToolCall[] }[];
 }
 
+type Mode = "ask" | "plan" | "agent";
+
+const MODE_INFO: Record<Mode, { label: string; description: string }> = {
+  ask: { label: "Ask", description: "Plain conversation, no tools -- no project access" },
+  plan: { label: "Plan", description: "Explores and plans, read-only -- never writes or executes" },
+  agent: { label: "Agent", description: "Full access, mutations still require your approval" },
+};
+
+// Set by the VS Code extension via a ?theme= query param on this page's
+// iframe src (Entry 38) -- an iframe is a separate document from the
+// extension's own webview, so VS Code's --vscode-* CSS variables can't
+// cross that boundary automatically; this is the bridge instead.
+function detectTheme(): "light" | "dark" {
+  const param = new URLSearchParams(window.location.search).get("theme");
+  return param === "dark" ? "dark" : "light";
+}
+
 function App() {
   const [input, setInput] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -64,6 +81,12 @@ function App() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyList, setHistoryList] = useState<ConversationSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [mode, setMode] = useState<Mode>("agent");
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", detectTheme());
+  }, []);
 
   // Poll the session while a question is in flight -- a single /ask
   // request can't block until a human clicks Approve/Decline, so progress
@@ -148,7 +171,7 @@ function App() {
       const response = await fetch(`${API_BASE}/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, session_id: conversationId }),
+        body: JSON.stringify({ message, session_id: conversationId, mode }),
       });
       if (!response.ok) {
         throw new Error(`Backend returned ${response.status}`);
@@ -230,7 +253,7 @@ function App() {
       <header className="app-header">
         <div className="brand">
           <div className="brand-mark">D</div>
-          <div>
+          <div className="brand-text">
             <h1>DevPilot AI</h1>
             <p className="subtitle">Local AI engineering copilot — MCP-powered</p>
           </div>
@@ -258,7 +281,8 @@ function App() {
           </div>
           {(turns.length > 0 || conversationId) && (
             <button className="new-conversation-btn" onClick={newConversation} disabled={loading}>
-              New conversation
+              <span className="btn-label-full">New conversation</span>
+              <span className="btn-label-short">New</span>
             </button>
           )}
         </div>
@@ -322,6 +346,33 @@ function App() {
       </main>
 
       <footer className="input-bar">
+        <div className="mode-select-wrap">
+          <button
+            className={`mode-select-btn mode-${mode}`}
+            onClick={() => setModeMenuOpen((v) => !v)}
+            disabled={loading}
+          >
+            <span className="mode-select-btn-label">{MODE_INFO[mode].label}</span>
+            <span className="mode-caret">▾</span>
+          </button>
+          {modeMenuOpen && (
+            <div className="mode-menu">
+              {(Object.keys(MODE_INFO) as Mode[]).map((m) => (
+                <button
+                  key={m}
+                  className={`mode-menu-item${m === mode ? " active" : ""}`}
+                  onClick={() => {
+                    setMode(m);
+                    setModeMenuOpen(false);
+                  }}
+                >
+                  <span className="mode-menu-item-label">{MODE_INFO[m].label}</span>
+                  <span className="mode-menu-item-desc">{MODE_INFO[m].description}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <input
           type="text"
           value={input}

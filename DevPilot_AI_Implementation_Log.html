@@ -157,6 +157,10 @@ and exactly what was done.</p>
     <li><a href="#entry-34">Entry 34 — CPU-Only Inference: Timeout and Context-Window Headroom</a></li>
     <li><a href="#entry-35">Entry 35 — Hallucinated Tool Calls: False Claims of File Writes</a></li>
     <li><a href="#entry-36">Entry 36 — Continuing a Conversation After a Backend Restart</a></li>
+    <li><a href="#entry-37">Entry 37 — Correcting Entry 34: num_ctx Was Making Memory Pressure Worse</a></li>
+    <li><a href="#entry-38">Entry 38 — Ask/Plan/Agent Modes and a VS Code-Native Theme</a></li>
+    <li><a href="#entry-39">Entry 39 — The Layout Was Never Tested at Real Sidebar Width</a></li>
+    <li><a href="#entry-40">Entry 40 — Text Rendering Near-Black Regardless of Theme</a></li>
   </ol>
 </nav>
 
@@ -5205,6 +5209,410 @@ if session is None:
   prior discussion about <code>styles.css</code> and the decline,
   <code>tool_calls: []</code> — genuine memory, transparently recovered,
   not a fresh, context-less conversation.</p>
+</div>
+
+<h2 id="entry-37">Entry 37 — Correcting Entry 34: <code>num_ctx</code> Was Making Memory Pressure Worse</h2>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>"Again and again" — a signal Entry 34's fix hadn't actually
+  helped.</strong> The user reported the same 600s timeout recurring
+  repeatedly, with visible frustration. Rather than repeat the same
+  "check memory pressure" advice a third time, re-checked everything
+  fresh: WSL free memory was back down to <strong>127MB</strong> (having
+  been 6.8GB just minutes earlier — genuinely volatile, not steady), and
+  Code.exe count had climbed to <strong>42</strong> (up from 38, then 41
+  — growing, not shrinking). Also checked something not checked before:
+  Ollama's own <code>/api/ps</code> now reported the loaded model at
+  <strong>5,455,793,356 bytes</strong> — about 400MB larger than the
+  5,062,566,870 bytes measured before Entry 34 raised
+  <code>num_ctx</code> to 8192.</p>
+
+  <p><strong>The realization.</strong> Entry 34 raised the context
+  window to reduce a theoretical truncation risk that was never actually
+  observed anywhere in this project's real usage. But a bigger context
+  window means Ollama allocates a bigger KV-cache for the model, which
+  means a bigger memory footprint per loaded model — and Entry 34's own
+  later finding was that memory pressure, not context truncation, is the
+  actual dominant cause of these timeouts on this machine. Entry 34 had
+  fixed the wrong side of the tradeoff: it spent memory (the scarce
+  resource) to buy protection against a risk that was never the real
+  problem, on a machine where spending memory is exactly what causes the
+  real problem.</p>
+
+  <p><strong>Fix.</strong> Revert <code>OLLAMA_CONTEXT_LENGTH</code> 8192
+  → 4096 (Ollama's own default, not a guessed middle value) — un-doing
+  only that half of Entry 34; <code>REQUEST_TIMEOUT_SECONDS</code> stays
+  at 600, since a more generous timeout genuinely doesn't cost any
+  memory, only wall-clock patience.</p>
+
+  <p><strong>Will do:</strong> the one-constant revert; restart the
+  backend, trigger a fresh model load, and confirm via
+  <code>/api/ps</code> that the memory footprint actually drops back to
+  the original, smaller measurement — not assume the revert worked just
+  because the number changed in source.<br>
+  <strong>Won't do:</strong> pretend this is a complete fix for the
+  underlying chronic memory pressure — the Code.exe count climbing
+  (38→41→42) is a separate, still-open problem the user needs to
+  actually address (closing windows), not something a backend-side
+  constant can fix.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>One constant in <code>llm/agent.py</code>:
+  <code>OLLAMA_CONTEXT_LENGTH = 4096</code> (was 8192), comment rewritten
+  to record both what Entry 34 tried and why Entry 37 reverted it, so a
+  future reader sees the full reasoning, not just the current value.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Restarted the backend, sent a trivial question to force a fresh
+  model load, then queried Ollama's <code>/api/ps</code> directly:
+  <code>"size": 5062566870, "context_length": 4096</code> — the exact
+  original footprint from before Entry 34, confirmed by the number, not
+  assumed from the config change. The question itself completed quickly,
+  no timeout. This corrects Entry 34 rather than silently editing it —
+  the honest record is that the first attempt at this fix made things
+  measurably worse before this entry caught and reverted it.</p>
+</div>
+
+<h2 id="entry-38">Entry 38 — Ask/Plan/Agent Modes and a VS Code-Native Theme</h2>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>The ask, scoped explicitly before building anything</strong>
+  — this combines a visual redesign with a real behavioral feature, and
+  one part (auto-accept edits) would have touched this project's core
+  safety guarantee (Entry 24), so all three axes were confirmed with the
+  user directly rather than assumed: VS Code-native theme (not Claude
+  Code's dark aesthetic, not a further light-theme polish); a real
+  Ask/Plan/Agent mode selector; and — explicitly declined —
+  <strong>no</strong> auto-accept-edits option. Every gated mutation
+  stays manual-approval-only, no exceptions, preserving exactly what
+  Entry 24 through Entry 35 built and tested.</p>
+
+  <p><strong>What the three modes mean for DevPilot specifically,
+  defined precisely rather than borrowed loosely:</strong></p>
+  <ul>
+    <li><strong>Ask</strong> — zero tools offered at all. Pure
+    conversation, no project awareness beyond what's already in the
+    chat. The honest DevPilot equivalent of Copilot's Ask mode, which
+    doesn't take autonomous actions — DevPilot has no separate retrieval
+    layer, so "no tools" is the accurate, non-overclaiming
+    implementation, not an approximation.</li>
+    <li><strong>Plan</strong> — an explicit allow-list of read-only
+    tools only (<code>read_file</code>, <code>list_directory</code>,
+    <code>get_file_info</code>, <code>search_files</code>,
+    <code>list_tables</code>, <code>describe_table</code>,
+    <code>execute_read_query</code>, <code>list_containers</code>,
+    <code>inspect_container</code>, <code>get_container_logs</code>,
+    <code>git_status</code>, <code>git_log</code>, <code>git_diff</code>,
+    <code>git_list_branches</code>, <code>get_repository</code>,
+    <code>search_web</code>, <code>fetch_page</code>) — explicitly
+    excludes Terminal's <code>execute_command</code> (can run allow-listed
+    but still side-effecting commands like <code>pip install</code>) and
+    <code>git_create_branch</code> (a real mutation, even though it was
+    scoped ungated back in Entry 16) alongside every already-gated tool.
+    Nothing in Plan mode can change anything, by construction — an
+    allow-list, not a denylist, so a new tool added later is safe by
+    default until explicitly added here.</li>
+    <li><strong>Agent</strong> — today's full, unchanged behavior. All 26
+    tools, gated ones still require real approval exactly as before.</li>
+  </ul>
+
+  <p><strong>The iframe boundary — a real technical wrinkle in "VS
+  Code-native theme," surfaced and solved, not glossed over.</strong>
+  Entry 27 embeds DevPilot's UI as <code>&lt;iframe
+  src="http://127.0.0.1:8001/"&gt;</code> inside the extension's own
+  webview HTML. VS Code injects real <code>--vscode-*</code> CSS custom
+  properties into a webview's document — but an iframe is a fully
+  separate document with its own CSSOM; those variables do not cross the
+  iframe boundary automatically. Mirroring VS Code's exact internal color
+  tokens would need a live postMessage bridge (and would still be
+  fragile — those token names aren't a stable public contract). The
+  pragmatic, honest scope: the extension detects the user's actual active
+  theme kind (<code>vscode.window.activeColorTheme.kind</code>,
+  light/dark/high-contrast) and passes it to the iframe via a
+  <code>?theme=</code> query param on its <code>src</code>; DevPilot's
+  own frontend picks between two deliberately VS-Code-flavored palettes
+  (not pixel-identical to any specific VS Code theme, since that's not
+  achievable across the iframe boundary without much more machinery) —
+  and the extension listens for live theme changes
+  (<code>onDidChangeActiveColorTheme</code>) and re-renders the iframe so
+  switching your VS Code theme updates DevPilot without a manual reload.</p>
+
+  <p><strong>Will do:</strong> thread a <code>mode</code> parameter
+  through <code>POST /ask</code> → <code>backend/sessions.py</code> →
+  <code>llm/agent.py</code>'s <code>ask()</code>, filtering the tool list
+  per mode before <code>_discover_tools</code>'s result is offered to the
+  model, plus a mode-specific system-prompt addition for Plan mode; a
+  mode selector in the frontend next to the input bar; theme detection
+  wired from the extension through the iframe query param into a real
+  dark palette in <code>App.css</code>; test each mode's actual tool
+  restriction live, not just trust the filter logic by inspection.<br>
+  <strong>Won't do:</strong> any auto-accept-edits option (explicitly
+  declined); pixel-exact mirroring of VS Code's own color tokens (not
+  achievable across the iframe boundary at reasonable cost); changing
+  mode mid-turn (a mode applies to the whole request it's sent with, same
+  granularity Copilot's own mode dropdown uses).</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><strong>Backend:</strong> <code>_tools_for_mode()</code> in
+  <code>llm/agent.py</code> filters the discovered tool list before it's
+  ever offered to Ollama — the real enforcement, since Ollama structurally
+  cannot call a tool absent from the request. This also closes Entry 35's
+  hallucination-rescue path automatically for excluded tools: that path
+  only trusts names already in the offered list. A per-turn mode
+  reminder is injected into that turn's own message content (not the
+  stored <code>session.turns</code> shown in the UI, which stays the
+  user's clean raw text) so the model hears about the current mode even
+  mid-conversation. <code>mode</code> threaded through
+  <code>AskRequest</code> → <code>start_session</code>/<code>continue_session</code>
+  → <code>ask()</code>.</p>
+
+  <p><strong>Frontend:</strong> a mode dropdown next to the input box
+  (Ask/Plan/Agent, colored dot + description per option); theme detection
+  via a <code>?theme=</code> query param read on mount, applied as
+  <code>data-theme</code> on <code>&lt;html&gt;</code>; two full CSS
+  palettes in <code>App.css</code> under bare <code>:root</code> (light,
+  default) and <code>:root[data-theme="dark"]</code>. Hit a real CSS
+  specificity bug along the way, caught by screenshot, not assumed fixed
+  from reading the rules: <code>.input-bar button</code> (class+element,
+  specificity 0,1,1) was silently beating the new
+  <code>.mode-select-btn</code>/<code>.mode-menu-item</code> rules
+  (bare class, 0,1,0) regardless of source order, rendering both as solid
+  blue instead of the intended subtle style — fixed by qualifying both
+  with a parent class to win on specificity, not by reordering (which
+  wouldn't have helped).</p>
+
+  <p><strong>Extension:</strong> <code>themeParam()</code> maps
+  <code>vscode.window.activeColorTheme.kind</code> to <code>"dark"</code>/<code>"light"</code>,
+  appended to the iframe's <code>src</code>. A new
+  <code>onDidChangeActiveColorTheme</code> listener calls
+  <code>refreshTheme()</code>, which re-renders the iframe HTML with the
+  new value if it's currently showing — DevPilot updates live when the
+  user switches their VS Code theme, not only on next panel open. The
+  loading/error screens (the webview's own document, not inside the
+  iframe) switched to real <code>--vscode-font-family</code>/<code>--vscode-foreground</code>/<code>--vscode-errorForeground</code>
+  variables directly — no bridging needed there, a free improvement.
+  Repackaged (<code>vsce package</code>) and reinstalled
+  (<code>code --install-extension --force</code>).</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p><strong>Mode restrictions, live, not just by inspection.</strong>
+  Plan mode asked to create a file: log showed
+  <code>Mode='plan': offering 17/26 tools</code> (exact match to the
+  allow-list), the model produced a genuine numbered plan and explicitly
+  said it couldn't write in this mode, <code>tool_calls: []</code>, and
+  the file was confirmed not created on disk. Ask mode asked a
+  project-specific question: log showed
+  <code>Mode='ask': offering 0/26 tools</code>, the model correctly said
+  it had no way to check and asked the user to share the info manually
+  instead of guessing. Agent mode: unchanged, already covered by every
+  prior entry's live tests.</p>
+
+  <p><strong>Visual, via real Playwright screenshots</strong> (reinstalled
+  a fresh headless-Chromium setup after the prior one had been cleaned up
+  since Entry 27) at both <code>?theme=light</code> and
+  <code>?theme=dark</code>: idle state and the opened mode menu, zero
+  console/page errors in either theme. The specificity bug was visible
+  directly in the first light-theme screenshot (solid blue mode button
+  and menu items instead of the intended subtle style) — caught,
+  root-caused, fixed, and re-screenshotted to confirm correctly
+  transparent/outlined styling with a small colored mode-indicator dot
+  in both themes.</p>
+
+  <p>Confirmed the installed (not just packaged) extension contains the
+  new code via a direct grep of
+  <code>~/.vscode/extensions/devpilot-local.devpilot-ai-0.1.0/dist/extension.js</code>
+  for <code>themeParam</code>/<code>refreshTheme</code>. Backend
+  confirmed healthy, correctly scoped, and serving the latest built
+  frontend bundle.</p>
+</div>
+
+<h2 id="entry-39">Entry 39 — The Layout Was Never Tested at Real Sidebar Width</h2>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>A real screenshot from the user, not a vague complaint.</strong>
+  "I still need a better UI," with a screenshot attached — the screenshot
+  itself was the evidence: the header title/subtitle text wrapped and
+  clipped awkwardly. Every prior screenshot test in this project (Entry
+  26, 27, 38) was taken at a normal browser width (~1280px), because
+  that's what Playwright defaults to and no one had checked otherwise.
+  But the actual, permanent viewing context since Entry 27 is a docked VS
+  Code sidebar panel — routinely 250-350px wide. The redesign had never
+  once been tested at the width it actually gets used at.</p>
+
+  <p><strong>Reproduced first, before touching any CSS.</strong> Screenshotted
+  the real running app at 320px and 280px viewports. Confirmed something
+  worse than the reported cosmetic issue: the <strong>Send button was
+  pushed completely off-screen</strong> — at real sidebar widths, the
+  input bar's contents didn't fit and nothing shrank to compensate, so
+  sending a message was not just ugly, it was <em>impossible</em>.</p>
+
+  <p><strong>Root-caused with real measurements, not guessed at.</strong>
+  Queried actual bounding boxes and <code>scrollWidth</code> via
+  Playwright rather than trusting the screenshot's visual read alone: at
+  a 320px viewport, <code>document.body.scrollWidth</code> measured
+  <strong>388px</strong> — genuine page-level horizontal overflow, not a
+  narrow truncation issue. Traced it to two separate, real CSS bugs
+  stacked on each other:</p>
+  <ul>
+    <li><strong>The input field had no <code>min-width: 0</code>.</strong>
+    A flex child won't shrink below its own content's natural width
+    unless explicitly told to — the classic flexbox trap. Without it,
+    <code>flex: 1</code> alone doesn't make an element shrink past its
+    intrinsic minimum, so the input refused to give up room to the Send
+    button beside it.</li>
+    <li><strong>The deeper cause: <code>.app</code> itself (the top-level
+    <code>flex-direction: column</code> container) had no explicit
+    <code>width</code>.</strong> A flex container without one can grow to
+    fit its widest child's content-based size instead of being clamped to
+    the actual viewport — so even fixing individual children's shrink
+    behavior wouldn't have been enough while the parent itself was free
+    to balloon past 320px to accommodate them.</li>
+  </ul>
+
+  <p><strong>Will do:</strong> <code>width: 100%</code> on
+  <code>.app</code> (the real fix — clamps the whole layout to the actual
+  available width, letting <code>max-width: 780px</code> still cap it on
+  a normal browser tab); <code>min-width: 0</code> on every flex
+  container/item in the chain that needs to shrink
+  (<code>.app-header</code>, <code>.input-bar</code>, the input itself,
+  <code>.brand</code>/<code>.brand-text</code>); a compact header (smaller
+  brand mark, truncating title, subtitle hidden below 340px, shorter
+  button labels below 340px); an icon-only mode selector below 300px
+  (just the colored dot) so the input field keeps the room it actually
+  needs; re-verify with real bounding-box measurements after the fix, not
+  just a screenshot that looks plausible.<br>
+  <strong>Won't do:</strong> redesigning the message-bubble/tool-trace
+  layout, which wasn't reported as broken and uses percentage-based
+  widths that already scale correctly.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>Core fix, <code>frontend/src/App.css</code>:</p>
+  <pre><code>.app {
+  width: 100%;        /* was: no explicit width at all */
+  max-width: 780px;
+  ...
+}</code></pre>
+  <p>Plus <code>min-width: 0</code> added to <code>.app-header</code>,
+  <code>.input-bar</code>, <code>.input-bar input</code>, and
+  <code>.brand</code>/<code>.brand-text</code>; <code>.input-bar
+  button</code> (Send) marked <code>flex-shrink: 0</code> so it's always
+  fully visible rather than being the thing that shrinks. Header made
+  compact (smaller brand mark, <code>text-overflow: ellipsis</code> on
+  title/subtitle) with a <code>@media (max-width: 340px)</code> block
+  hiding the subtitle and swapping button labels to shorter text
+  (<code>btn-label-full</code>/<code>btn-label-short</code> spans toggled
+  via CSS, not conditional rendering). Mode selector gets its own
+  <code>@media (max-width: 300px)</code> collapsing to icon-only (the
+  colored dot + caret, label hidden).</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Verified with the same precise measurement approach used to find the
+  bug, not just a screenshot that looked better. After the fix, at a
+  320px viewport: <code>document.body.scrollWidth = 320</code> — exactly
+  matching the viewport, zero overflow. Send button's real bounding box:
+  <code>x=244, width=62</code> → right edge at 306px, fully inside the
+  320px viewport and clickable. Screenshotted 320px, 280px (the mode
+  selector correctly collapsed to icon-only, everything else stayed
+  fully visible and functional), and re-confirmed the normal ~1280px
+  case still renders identically to Entry 38's already-verified
+  screenshots — no regression from the width/min-width changes. No
+  extension repackaging needed since only the frontend changed; the
+  backend already serves <code>frontend/dist/</code> live off disk.</p>
+</div>
+
+<h2 id="entry-40">Entry 40 — Text Rendering Near-Black Regardless of Theme</h2>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Reported plainly: "DevPilot AI text is hidden in black."</strong>
+  Checked with real computed styles before touching CSS, not assumed from
+  reading the rules. Queried <code>getComputedStyle</code> on the actual
+  <code>&lt;h1&gt;</code> in both a dark-themed and a bare (light,
+  default) load: <code>h1Color: "rgb(8, 6, 13)"</code> — near-black — in
+  <em>both</em> themes, while <code>body</code>'s own color correctly
+  tracked the theme (<code>rgb(212,212,212)</code> dark,
+  <code>rgb(30,30,30)</code> light). <code>.app-header h1</code> had no
+  <code>color</code> rule of its own — it was relying on inheritance from
+  <code>body</code> — but something was clearly overriding that
+  inheritance with a near-black value regardless of theme, for reasons
+  not worth fully chasing down (a Chromium heading-color quirk, most
+  likely) when there's a strictly correct fix available regardless of the
+  exact cause.</p>
+
+  <p><strong>The fix, and the audit it prompted.</strong> Set
+  <code>color: var(--text)</code> explicitly rather than relying on
+  inheritance. But this raised an obvious question: if h1 silently had
+  this problem, what else might? A quick audit of every text-bearing rule
+  found three more relying on the same unstated inheritance —
+  <code>.message</code>, <code>.ai-message</code>, and
+  <code>.approval-label</code> — none of which had ever actually been
+  visually verified, since every prior screenshot test (Entry 26-39) only
+  ever captured the <em>empty/idle</em> state. A real populated
+  conversation's message bubbles and approval card had never once been
+  screenshotted with the current theme system in place.</p>
+
+  <p><strong>Will do:</strong> explicit <code>color: var(--text)</code> on
+  <code>.app-header h1</code>, <code>.message</code>, and
+  <code>.approval-label</code>; verify with real computed-style checks,
+  not just a screenshot; specifically test the message-bubble/approval
+  states that had never actually been visually confirmed before, not just
+  re-check the idle screen.<br>
+  <strong>Won't do:</strong> chase down the exact Chromium mechanism
+  behind the original near-black value — not diagnosable further without
+  more time than the fix is worth, and explicit color rules make the
+  question moot regardless of the cause.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>Three explicit <code>color: var(--text)</code> additions in
+  <code>frontend/src/App.css</code>: <code>.app-header h1</code>,
+  <code>.message</code> (the shared base rule — <code>.user-message</code>
+  still overrides it with <code>--user-text</code> for its own colored
+  bubble), and <code>.approval-label</code>.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Re-queried computed styles after the fix: <code>h1Color</code> now
+  <code>rgb(212, 212, 212)</code> in dark theme and
+  <code>rgb(30, 30, 30)</code> in light — exactly matching
+  <code>bodyColor</code> in both, instead of a fixed near-black regardless
+  of theme. Directly checked the previously-never-tested elements too
+  (injected sample nodes with the real classes rather than waiting on a
+  live multi-minute LLM round trip just to populate a conversation):
+  <code>ai-message</code> and <code>approval-label</code> both correctly
+  read <code>rgb(212, 212, 212)</code>, <code>user-message</code> stayed
+  white on its blue bubble. Re-screenshotted the dark idle state and
+  visually confirmed "DevPilot AI" now renders clearly instead of
+  blending into the background.</p>
 </div>
 
 <footer>

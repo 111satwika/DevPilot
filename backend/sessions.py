@@ -31,6 +31,10 @@ conversation through the History dropdown, proving the rehydration path
 works -- it just wasn't reached automatically from the normal send-a-
 message flow. continue_session() now tries the same rehydration
 resume_conversation() already does before giving up.
+
+Entry 38: start_session()/continue_session() take a mode
+("ask"|"plan"|"agent"), passed straight through to ask() -- see
+llm/agent.py for what each mode actually restricts.
 """
 
 import asyncio
@@ -49,9 +53,9 @@ def create_session() -> AgentSession:
     return session
 
 
-async def _run(session: AgentSession, message: str) -> None:
+async def _run(session: AgentSession, message: str, mode: str) -> None:
     try:
-        session.result = await ask(message, session=session)
+        session.result = await ask(message, session=session, mode=mode)
         session.status = "done"
         session.turns.append(
             {
@@ -66,9 +70,9 @@ async def _run(session: AgentSession, message: str) -> None:
         session.status = "error"
 
 
-def start_session(message: str) -> AgentSession:
+def start_session(message: str, mode: str = "agent") -> AgentSession:
     session = create_session()
-    asyncio.create_task(_run(session, message))
+    asyncio.create_task(_run(session, message, mode))
     return session
 
 
@@ -76,7 +80,7 @@ class SessionNotContinuableError(Exception):
     """Raised when trying to continue a session that isn't actually done yet."""
 
 
-def continue_session(session_id: str, message: str) -> AgentSession:
+def continue_session(session_id: str, message: str, mode: str = "agent") -> AgentSession:
     session = resume_conversation(session_id)  # rehydrates from history if needed
     if session is None:
         raise KeyError(session_id)
@@ -88,7 +92,7 @@ def continue_session(session_id: str, message: str) -> AgentSession:
     session.status = "running"
     session.result = None
     session.error = None
-    asyncio.create_task(_run(session, message))
+    asyncio.create_task(_run(session, message, mode))
     return session
 
 

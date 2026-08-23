@@ -82,6 +82,17 @@ a fenced ```json block naming a real, currently-offered tool and, if
 found, routes it through the exact same execution path a genuine tool
 call would use (still approval-gated for gated tools) instead of
 returning the false claim as a final answer.
+
+Entry 38: ask() takes a mode ("ask" | "plan" | "agent"), matching
+Copilot Chat's mode dropdown. _tools_for_mode() filters what's even
+offered to the model this turn -- Ask gets nothing, Plan gets an
+explicit read-only allow-list, Agent is unchanged. This is the real
+enforcement (Ollama can't call a tool that isn't in the request), not
+just a prompting request the model could ignore -- and it also closes
+Entry 35's hallucination-rescue path for excluded tools, since that path
+only trusts names already in the offered tool list. No auto-accept-edits
+option exists or is planned -- every gated mutation stays
+manual-approval-only in every mode, unchanged since Entry 24.
 """
 
 import asyncio
@@ -114,11 +125,15 @@ OLLAMA_MODEL = "qwen2.5:7b-instruct"
 # 300s (set for the smaller Entry 18/19 tool schema, before Entries 23/24
 # grew it to 26 tools) was cutting off requests that would have finished.
 REQUEST_TIMEOUT_SECONDS = 600
-# Entry 34: Ollama's default (4096) is tight against 26 tools' worth of
-# schema plus a growing multi-turn conversation (Entry 31/33) -- real
-# truncation risk. Raised via the request's own options.num_ctx rather
-# than changing the model file.
-OLLAMA_CONTEXT_LENGTH = 8192
+# Entry 34 raised this 4096 -> 8192 to reduce truncation risk against the
+# 26-tool schema. Entry 37 reverted it: real evidence showed timeouts
+# recurring *more* often afterward -- Ollama's own /api/ps reported the
+# loaded model ~400MB bigger at num_ctx=8192 than at 4096, on a machine
+# where WSL free memory was repeatedly measured near zero. Truncation was
+# a theoretical risk that was never actually observed; the extra memory
+# pressure was a real, measured cost on the actual bottleneck. Reverted
+# to Ollama's own default rather than guessing at a middle value.
+OLLAMA_CONTEXT_LENGTH = 4096
 # Entry 29: was 5. A real run on an actual multi-folder project (Entry
 # 29's fix made the model genuinely explore via list_directory instead of
 # giving up immediately) used all 5 turns just browsing directories and
@@ -178,6 +193,40 @@ GATED_TOOL_MODULE = {
     "git_commit": "mcp_servers.git.server",
     "git_delete_branch": "mcp_servers.git.server",
     "git_push": "mcp_servers.git.server",
+}
+
+# Entry 38: Ask/Plan/Agent modes, matching Copilot Chat's mode dropdown.
+# Ask -- zero tools, pure conversation. Plan -- an explicit allow-list of
+# read-only tools (not a denylist -- a new tool added later is excluded
+# by default until explicitly added here). Agent -- today's full
+# behavior, unchanged. Plan deliberately excludes execute_command (can
+# run allow-listed but still side-effecting commands like `pip install`)
+# and git_create_branch (a real mutation, ungated since Entry 16) on top
+# of every already-gated tool -- nothing in Plan mode can change
+# anything, by construction.
+PLAN_MODE_ALLOWED_TOOLS = {
+    "read_file", "list_directory", "get_file_info", "search_files",
+    "list_tables", "describe_table", "execute_read_query",
+    "list_containers", "inspect_container", "get_container_logs",
+    "git_status", "git_log", "git_diff", "git_list_branches",
+    "get_repository", "search_web", "fetch_page",
+}
+
+MODE_PROMPTS = {
+    "ask": (
+        "You are in Ask mode: answer directly from this conversation. "
+        "You have no tools available -- do not claim to check, read, or "
+        "look anything up."
+    ),
+    "plan": (
+        "You are in Plan mode: explore the project using only the "
+        "read-only tools available to you and produce a clear, concrete "
+        "plan of what should be done and why. Do not attempt to write, "
+        "modify, delete, or execute anything -- that's not possible in "
+        "this mode. If the user wants the plan carried out, tell them to "
+        "switch to Agent mode."
+    ),
+    "agent": "",
 }
 
 _tool_server: dict[str, str] = {}
@@ -296,6 +345,18 @@ async def _discover_tools() -> list[dict]:
     return ollama_tools
 
 
+def _tools_for_mode(all_tools: list[dict], mode: str) -> list[dict]:
+    """Entry 38: the real enforcement for Ask/Plan modes -- Ollama can
+    only call a tool that's actually in the request's tools array, so
+    this is a structural restriction, not just a prompting request the
+    model could ignore."""
+    if mode == "ask":
+        return []
+    if mode == "plan":
+        return [t for t in all_tools if t["function"]["name"] in PLAN_MODE_ALLOWED_TOOLS]
+    return all_tools  # "agent" (and any unrecognized mode) -- today's full behavior
+
+
 async def _call_gated_tool(name: str, arguments: dict, session: AgentSession) -> str:
     """Open a real stdio session just for this call, with an elicitation
     callback that pauses on session.pending until a human resolves the
@@ -382,7 +443,9 @@ def _extract_hallucinated_tool_calls(content: str, known_tool_names: set[str]) -
     return calls
 
 
-async def ask(user_message: str, session: AgentSession | None = None) -> AgentResult:
+async def ask(
+    user_message: str, session: AgentSession | None = None, mode: str = "agent"
+) -> AgentResult:
     """Ask the agent something. It decides which tools (if any) to call.
 
     Pass a session to allow gated tool calls to pause for real human
@@ -395,20 +458,33 @@ async def ask(user_message: str, session: AgentSession | None = None) -> AgentRe
     same conversation), this continues that same conversation instead of
     starting fresh -- messages is the SAME list object as
     session.messages, so every append below (including the final answer)
-    persists onto the session automatically for the next continuation."""
-    tools = await _discover_tools()
+    persists onto the session automatically for the next continuation.
+
+    Entry 38: mode ("ask" | "plan" | "agent") controls which tools are
+    even offered this turn (see _tools_for_mode) -- applied fresh every
+    call, so mode can differ turn to turn within the same conversation,
+    same granularity Copilot's own mode dropdown uses. A mode reminder is
+    injected into this turn's own message content (not the stored
+    session.turns shown in the UI, which stays the user's raw text) so
+    the model is told about the current mode even mid-conversation,
+    where the original system prompt was fixed on turn 1."""
+    all_tools = await _discover_tools()
+    tools = _tools_for_mode(all_tools, mode)
     print(
-        f"Discovered {len(tools)} tools across {len(SERVERS)} servers: "
+        f"Mode={mode!r}: offering {len(tools)}/{len(all_tools)} tools: "
         + ", ".join(t["function"]["name"] for t in tools)
     )
 
+    mode_instruction = MODE_PROMPTS.get(mode, "")
+    turn_content = f"{mode_instruction}\n\n{user_message}" if mode_instruction else user_message
+
     if session is not None and session.messages:
         messages = session.messages
-        messages.append({"role": "user", "content": user_message})
+        messages.append({"role": "user", "content": turn_content})
     else:
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
+            {"role": "user", "content": turn_content},
         ]
         if session is not None:
             session.messages = messages

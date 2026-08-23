@@ -1,17 +1,65 @@
+/* Entry 38: two deliberately VS-Code-flavored palettes (not a pixel
+   mirror of any specific VS Code theme's real tokens -- not achievable
+   from inside an iframe, see extension.ts). data-theme is set on
+   <html> from a ?theme= query param the extension passes based on the
+   user's actual active VS Code theme kind. */
 :root {
-  --bg: #f6f6f8;
-  --surface: #ffffff;
-  --border: #e6e6ea;
-  --text: #1a1a23;
-  --muted: #74747f;
-  --accent: #5b5bf0;
-  --accent-soft: #eeeefd;
-  --user-bubble: #5b5bf0;
+  --bg: #ffffff;
+  --surface: #f3f3f3;
+  --border: #e5e5e5;
+  --text: #1e1e1e;
+  --muted: #6e6e6e;
+  --accent: #005fb8;
+  --accent-hover: #004c94;
+  --accent-soft: #e8f0fe;
+  --user-bubble: #005fb8;
   --user-text: #ffffff;
   --ai-bubble: #ffffff;
-  --error: #dc4747;
+  --error: #d13438;
   --error-soft: #fdecec;
+  --error-soft-hover: #fbdada;
+  --error-border: #f6c9c9;
+  --warning-bg: #fffaf0;
+  --warning-border: #f0c96b;
+  --placeholder: #a3a3ad;
   --shadow: 0 1px 2px rgba(20, 20, 30, 0.04), 0 4px 16px rgba(20, 20, 30, 0.06);
+}
+
+:root[data-theme="dark"] {
+  --bg: #1e1e1e;
+  --surface: #252526;
+  --border: #3c3c3c;
+  --text: #d4d4d4;
+  --muted: #9d9d9d;
+  --accent: #0078d4;
+  --accent-hover: #1a8cea;
+  --accent-soft: #16385c;
+  --user-bubble: #0078d4;
+  --user-text: #ffffff;
+  --ai-bubble: #252526;
+  --error: #f14c4c;
+  --error-soft: #3a2020;
+  --error-soft-hover: #4a2828;
+  --error-border: #5a2c2c;
+  --warning-bg: #3a3320;
+  --warning-border: #7a6a2e;
+  --placeholder: #6a6a6a;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+/* Mode accents (Entry 38) -- theme-independent, small badges/borders
+   only, chosen to read clearly on both the light and dark surfaces
+   above rather than derived from --accent. */
+:root {
+  --mode-ask: #6e6e6e;
+  --mode-plan: #8250df;
+  --mode-agent: #005fb8;
+}
+
+:root[data-theme="dark"] {
+  --mode-ask: #9d9d9d;
+  --mode-plan: #a371f7;
+  --mode-agent: #0078d4;
 }
 
 * {
@@ -24,9 +72,17 @@ body {
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden; /* safety net -- .app below is the real fix */
 }
 
 .app {
+  /* Root cause of the narrow-sidebar overflow (Entry 39): a
+     flex-direction:column container with no explicit width can grow to
+     fit its widest child's content-based size instead of being clamped
+     to the actual viewport -- width:100% forces it to never exceed
+     whatever room is actually available, letting max-width still cap it
+     on a normal-width browser tab. */
+  width: 100%;
   max-width: 780px;
   margin: 0 auto;
   height: 100vh;
@@ -35,37 +91,53 @@ body {
   background: var(--bg);
 }
 
+/* Entry 39: this panel's real, permanent viewing context is a narrow VS
+   Code sidebar (often 250-350px), not a wide browser tab -- the original
+   header/input-bar were only ever screenshot-tested at ~1280px, so
+   nothing here actually shrank correctly. min-width: 0 is the fix for
+   the classic flexbox trap: a flex child won't shrink below its content
+   size unless told to, which is exactly what was pushing the Send
+   button off-screen entirely at real sidebar widths. */
 .app-header {
-  padding: 1.4rem 1.5rem 1.1rem;
+  min-width: 0; /* same fix as .app -- a flex item can otherwise refuse
+                   to shrink below its own content's natural width */
+  padding: 0.8rem 0.9rem;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.6rem;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.8rem;
+  gap: 0.6rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.brand-text {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.4rem;
   flex-shrink: 0;
 }
 
 .new-conversation-btn,
 .history-btn {
-  padding: 0.45rem 0.85rem;
-  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+  border-radius: 7px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
-  font-size: 0.8rem;
+  font-size: 0.74rem;
   font-weight: 600;
   cursor: pointer;
   flex-shrink: 0;
@@ -146,30 +218,66 @@ body {
 }
 
 .brand-mark {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
   background: linear-gradient(135deg, #5b5bf0, #8f5bf0);
   color: white;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 1.1rem;
+  font-size: 0.95rem;
   flex-shrink: 0;
 }
 
 .app-header h1 {
   margin: 0;
-  font-size: 1.15rem;
+  color: var(--text); /* was relying on inheritance from body, which for
+                          reasons not worth chasing further wasn't
+                          actually reaching this h1 -- rendered near-black
+                          in both themes instead of following --text.
+                          Every other text element here sets color
+                          explicitly; this one just hadn't. */
+  font-size: 0.95rem;
   font-weight: 650;
   letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .subtitle {
-  margin: 0.1rem 0 0;
+  margin: 0.05rem 0 0;
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Below this, even the truncated subtitle stops being worth the space
+   in a docked sidebar -- drop it and the button label text, keep
+   everything functional and legible instead of clipped. */
+.btn-label-short {
+  display: none;
+}
+
+@media (max-width: 340px) {
+  .subtitle {
+    display: none;
+  }
+  .new-conversation-btn,
+  .history-btn {
+    padding: 0.35rem 0.5rem;
+    font-size: 0.68rem;
+  }
+  .btn-label-full {
+    display: none;
+  }
+  .btn-label-short {
+    display: inline;
+  }
 }
 
 .conversation {
@@ -195,6 +303,9 @@ body {
 }
 
 .message {
+  color: var(--text); /* explicit, not inherited -- see .app-header h1's
+                          comment; .user-message below still overrides
+                          this with --user-text for its colored bubble */
   padding: 0.75rem 1rem;
   border-radius: 14px;
   line-height: 1.55;
@@ -246,16 +357,17 @@ body {
 .error-message {
   background: var(--error-soft);
   color: var(--error);
-  border: 1px solid #f6c9c9;
+  border: 1px solid var(--error-border);
   align-self: flex-start;
 }
 
 .approval-request {
-  border: 1px solid #f0c96b;
-  background: #fffaf0;
+  border: 1px solid var(--warning-border);
+  background: var(--warning-bg);
 }
 
 .approval-label {
+  color: var(--text);
   font-weight: 650;
   font-size: 0.85rem;
   margin-bottom: 0.5rem;
@@ -304,11 +416,11 @@ body {
 .decline-btn {
   background: var(--error-soft);
   color: var(--error);
-  border: 1px solid #f6c9c9;
+  border: 1px solid var(--error-border);
 }
 
 .decline-btn:hover {
-  background: #fbdada;
+  background: var(--error-soft-hover);
 }
 
 .tool-trace {
@@ -353,26 +465,30 @@ body {
 }
 
 .input-bar {
+  min-width: 0; /* same fix as .app -- see comment there */
   display: flex;
-  gap: 0.6rem;
-  padding: 1.1rem 1.5rem;
+  gap: 0.5rem;
+  padding: 0.7rem 0.8rem;
   background: var(--surface);
   border-top: 1px solid var(--border);
 }
 
 .input-bar input {
   flex: 1;
-  padding: 0.7rem 1rem;
-  border-radius: 10px;
+  min-width: 0; /* the actual bug: a flex child won't shrink below its
+                   content width without this, which was pushing Send
+                   off-screen entirely at real sidebar widths */
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
-  font-size: 0.94rem;
+  font-size: 0.88rem;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .input-bar input::placeholder {
-  color: #a3a3ad;
+  color: var(--placeholder);
 }
 
 .input-bar input:focus {
@@ -383,19 +499,20 @@ body {
 }
 
 .input-bar button {
-  padding: 0.7rem 1.4rem;
-  border-radius: 10px;
+  flex-shrink: 0; /* Send must always stay fully visible and clickable */
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
   border: none;
   background: var(--accent);
   color: white;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   cursor: pointer;
   transition: background 0.15s, transform 0.1s;
 }
 
 .input-bar button:hover:not(:disabled) {
-  background: #4a4ae0;
+  background: var(--accent-hover);
 }
 
 .input-bar button:active:not(:disabled) {
@@ -405,4 +522,126 @@ body {
 .input-bar button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Mode selector (Entry 38) -- placed left of the input, matching
+   Copilot Chat's mode dropdown position. */
+.mode-select-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* .input-bar button (class+element, specificity 0,1,1) would otherwise
+   beat a bare .mode-select-btn (0,1,0) despite coming first in the
+   file -- qualified with .input-bar here to win on specificity, not
+   source order. */
+.input-bar .mode-select-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  height: 100%;
+  padding: 0.6rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Icon-only (just the colored mode dot) below this width -- the input
+   field itself needs the room more than the mode label does. */
+@media (max-width: 300px) {
+  .mode-select-btn-label {
+    display: none;
+  }
+  .input-bar .mode-select-btn {
+    padding: 0.6rem 0.5rem;
+  }
+}
+
+.input-bar .mode-select-btn:hover:not(:disabled) {
+  background: var(--surface);
+}
+
+.input-bar .mode-select-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mode-select-btn::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mode-agent);
+  flex-shrink: 0;
+}
+
+.mode-select-btn.mode-ask::before {
+  background: var(--mode-ask);
+}
+
+.mode-select-btn.mode-plan::before {
+  background: var(--mode-plan);
+}
+
+.mode-caret {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.mode-menu {
+  position: absolute;
+  bottom: calc(100% + 0.4rem);
+  left: 0;
+  width: 260px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 0.4rem;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+/* Qualified with .mode-menu for the same reason as .mode-select-btn
+   above -- otherwise .input-bar button (0,1,1) beats a bare
+   .mode-menu-item (0,1,0) regardless of source order. */
+.mode-menu .mode-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  border-radius: 7px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mode-menu .mode-menu-item:hover {
+  background: var(--accent-soft);
+}
+
+.mode-menu .mode-menu-item.active {
+  background: var(--accent-soft);
+}
+
+.mode-menu-item-label {
+  font-size: 0.84rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.mode-menu-item-desc {
+  font-size: 0.74rem;
+  color: var(--muted);
 }
