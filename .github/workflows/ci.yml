@@ -1,0 +1,33 @@
+name: CI
+
+# Entry 41 (gap-fix, 2026-08-23): first CI pipeline in this project. The
+# design doc's Config/Versioning/Deployment section has called for
+# "lint + type-check + contract tests + adversarial tests on every PR"
+# since the plan was written; nothing ran automatically until now. Scoped
+# to what tests/ actually covers: no WSL/Docker/Ollama dependency, so this
+# intentionally can't exercise the Docker/Git-over-WSL bridging paths --
+# those stay covered by the manual, live-tested discipline recorded in
+# DevPilot_AI_Implementation_Log.html.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest -q

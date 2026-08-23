@@ -241,11 +241,22 @@ function App() {
   async function respondToApproval(approved: boolean) {
     if (!sessionId) return;
     setPending(null); // optimistic -- the next poll confirms real state
-    await fetch(`${API_BASE}/session/${sessionId}/approve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ approved }),
-    });
+    try {
+      const response = await fetch(`${API_BASE}/session/${sessionId}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved }),
+      });
+      if (!response.ok) {
+        throw new Error(`Backend returned ${response.status}`);
+      }
+    } catch (err) {
+      // Previously swallowed silently (Entry 42 gap-fix) -- a failed
+      // approve/decline call (e.g. a stale session after a backend
+      // restart) left the user staring at "thinking" forever with no
+      // indication anything went wrong.
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   return (

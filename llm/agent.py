@@ -93,6 +93,30 @@ Entry 35's hallucination-rescue path for excluded tools, since that path
 only trusts names already in the offered tool list. No auto-accept-edits
 option exists or is planned -- every gated mutation stays
 manual-approval-only in every mode, unchanged since Entry 24.
+
+Entry 41 (gap-fix, 2026-08-23): two additions.
+
+1. `execute_command` moved into GATED_TOOLS. Terminal MCP's own allow-list
+   used to let `git` run with zero approval, completely bypassing Git
+   MCP's dedicated commit/push/branch-delete approval gates -- git was
+   removed from Terminal's allow-list entirely (see
+   mcp_servers/terminal/server.py), and mutating npm/pip subcommands
+   (install, uninstall, ...) now require approval the same way. Routing
+   ALL execute_command calls (not just mutating ones) through the gated
+   stdio path also closes an unrelated secret-leak: the in-memory Client
+   path used for every ungated tool runs inside the live backend
+   process and inherits its full environment, so a `python -c
+   "import os;print(os.environ)"` call could have dumped GITHUB_TOKEN or
+   any other secret straight into the model's context. stdio_client's
+   fixed OS-level env allowlist (verified in Entry 22) closes that for
+   free.
+
+2. Every tool call -- gated or not -- is now recorded to
+   mcp_servers/audit.py's append-only per-project log (arguments and
+   result preview secret-redacted). Previously the only record of what
+   the AI actually did was console output, not persisted or queryable
+   after the fact -- a real gap against the design doc's own audit-log
+   requirement.
 """
 
 import asyncio
@@ -106,6 +130,7 @@ import mcp.types as types
 from mcp import Client, ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from mcp_servers import audit
 from mcp_servers.browser.server import mcp as browser_mcp
 from mcp_servers.database.server import mcp as database_mcp
 from mcp_servers.docker.server import mcp as docker_mcp
@@ -180,9 +205,15 @@ SERVERS = {
 # @mcp.tool() names, not assumed. A gated call is routed through a real
 # stdio session with an elicitation callback (_call_gated_tool), not the
 # in-memory Client used for everything else.
+# Entry 41: execute_command joined this set -- not because every call
+# needs approval (most don't), but because routing it through the same
+# real-stdio mechanism as the others closes a secret-leak vector inherent
+# to the in-memory path, and lets it request approval itself for mutating
+# npm/pip subcommands. See mcp_servers/terminal/server.py for the actual
+# approval logic.
 GATED_TOOLS = {
     "write_file", "build_image", "run_container", "stop_container",
-    "git_commit", "git_delete_branch", "git_push",
+    "git_commit", "git_delete_branch", "git_push", "execute_command",
 }
 
 GATED_TOOL_MODULE = {
@@ -193,6 +224,7 @@ GATED_TOOL_MODULE = {
     "git_commit": "mcp_servers.git.server",
     "git_delete_branch": "mcp_servers.git.server",
     "git_push": "mcp_servers.git.server",
+    "execute_command": "mcp_servers.terminal.server",
 }
 
 # Entry 38: Ask/Plan/Agent modes, matching Copilot Chat's mode dropdown.
@@ -209,7 +241,12 @@ PLAN_MODE_ALLOWED_TOOLS = {
     "list_tables", "describe_table", "execute_read_query",
     "list_containers", "inspect_container", "get_container_logs",
     "git_status", "git_log", "git_diff", "git_list_branches",
-    "get_repository", "search_web", "fetch_page",
+    # Entry 43: GitHub MCP grew from 1 to 8 tools (design doc §8's full
+    # read-only set) -- all seven new ones are read-only, same as
+    # get_repository, so they belong in Plan mode too.
+    "get_repository", "list_files", "search_code", "get_file",
+    "list_commits", "get_commit", "list_pull_requests", "get_pull_request",
+    "search_web", "fetch_page",
 }
 
 MODE_PROMPTS = {
@@ -288,6 +325,21 @@ def _resolve_ollama_host() -> str:
     return ip
 
 
+async def check_ollama_reachable(timeout: float = 3.0) -> str:
+    """Best-effort reachability check for GET /status -- resolves the
+    Ollama container's IP only (no actual chat call), capped at `timeout`
+    so a slow/unreachable WSL setup can't make /status itself hang. Never
+    raises -- always returns a short human-readable status string.
+    Deliberately NOT part of GET /health, which the VS Code extension
+    polls every 500ms expecting a near-instant reply (Entry 27); a
+    multi-second WSL subprocess call there would break that polling loop."""
+    try:
+        host = await asyncio.wait_for(asyncio.to_thread(_resolve_ollama_host), timeout=timeout)
+        return f"ok ({host})"
+    except Exception as exc:  # noqa: BLE001 -- this is a status probe, any failure means "unreachable"
+        return f"unreachable: {exc}"
+
+
 def _ollama_chat(messages: list[dict], tools: list[dict]) -> dict:
     host = _resolve_ollama_host()
     url = f"http://{host}:{OLLAMA_PORT}/api/chat"
@@ -361,38 +413,69 @@ async def _call_gated_tool(name: str, arguments: dict, session: AgentSession) ->
     """Open a real stdio session just for this call, with an elicitation
     callback that pauses on session.pending until a human resolves the
     approval Future -- exactly the accept/decline shape stage8_client.py
-    proved live, not a client-side shortcut around ctx.elicit()."""
+    proved live, not a client-side shortcut around ctx.elicit().
+
+    Entry 41: every call here is audited (mcp_servers/audit.py) regardless
+    of outcome -- approved, declined, or errored -- via the finally block,
+    and whether approval was actually *requested* is tracked separately
+    from whether it was granted, since some GATED_TOOLS calls (a
+    non-mutating execute_command) never call ctx.elicit() at all."""
     server_params = StdioServerParameters(
         command=sys.executable,
         args=["-m", GATED_TOOL_MODULE[name]],
         env=forwarded_env(),
     )
 
+    approval_requested = False
+    approval_granted: bool | None = None
+
     async def elicitation_callback(context, params):
+        nonlocal approval_requested, approval_granted
+        approval_requested = True
         decision: "asyncio.Future[bool]" = asyncio.get_running_loop().create_future()
         session.pending = PendingApproval(
             tool=name, arguments=arguments, message=params.message, decision=decision
         )
         session.status = "awaiting_approval"
         approved = await decision
+        approval_granted = approved
         session.pending = None
         session.status = "running"
         if approved:
             return types.ElicitResult(action="accept", content={})
         return types.ElicitResult(action="decline")
 
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(
-            read, write, elicitation_callback=elicitation_callback
-        ) as mcp_session:
-            await mcp_session.initialize()
-            result = await mcp_session.call_tool(name, arguments)
+    result_text = ""
+    error_text: str | None = None
+    try:
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(
+                read, write, elicitation_callback=elicitation_callback
+            ) as mcp_session:
+                await mcp_session.initialize()
+                result = await mcp_session.call_tool(name, arguments)
 
-    if result.is_error:
-        return result.content[0].text
-    if result.structured_content is not None:
-        return json.dumps(result.structured_content)
-    return result.content[0].text
+        if result.is_error:
+            error_text = result.content[0].text
+            result_text = error_text
+        elif result.structured_content is not None:
+            result_text = json.dumps(result.structured_content)
+        else:
+            result_text = result.content[0].text
+        return result_text
+    except Exception as exc:
+        error_text = str(exc)
+        raise
+    finally:
+        audit.record(
+            session_id=session.id,
+            tool=name,
+            arguments=arguments,
+            gated=True,
+            approved=approval_granted if approval_requested else None,
+            result_preview=result_text,
+            error=error_text,
+        )
 
 
 async def _call_mcp_tool(name: str, arguments: dict, session: AgentSession | None) -> str:
@@ -409,14 +492,33 @@ async def _call_mcp_tool(name: str, arguments: dict, session: AgentSession | Non
         return f"Error: unknown tool '{name}'"
 
     server = SERVERS[server_name]
-    async with Client(server) as client:
-        result = await client.call_tool(name, arguments)
+    result_text = ""
+    error_text: str | None = None
+    try:
+        async with Client(server) as client:
+            result = await client.call_tool(name, arguments)
 
-    if result.is_error:
-        return result.content[0].text
-    if result.structured_content is not None:
-        return json.dumps(result.structured_content)
-    return result.content[0].text
+        if result.is_error:
+            error_text = result.content[0].text
+            result_text = error_text
+        elif result.structured_content is not None:
+            result_text = json.dumps(result.structured_content)
+        else:
+            result_text = result.content[0].text
+        return result_text
+    except Exception as exc:
+        error_text = str(exc)
+        raise
+    finally:
+        audit.record(
+            session_id=session.id if session is not None else "no-session",
+            tool=name,
+            arguments=arguments,
+            gated=False,
+            approved=None,
+            result_preview=result_text,
+            error=error_text,
+        )
 
 
 _JSON_TOOL_CALL_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)

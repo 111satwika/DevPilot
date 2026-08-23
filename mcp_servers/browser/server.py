@@ -7,13 +7,33 @@ Stage 5: two tools.
     SSRF (internal/private/loopback hosts rejected before fetching).
 
 Full rationale logged in DevPilot_AI_Implementation_Log.html Entry 9.
+
+Entry 42 (gap-fix, 2026-08-23, found during a deeper follow-up audit):
+fetch_page validated only the URL the caller passed in, then handed the
+request to an httpx2 client configured with follow_redirects=True -- so
+_reject_unsafe_url() ran exactly once, before the request, and never
+looked at where any 3xx response actually pointed. An attacker-controlled
+or merely compromised external page could 302 to
+`http://169.254.169.254/latest/meta-data/` or to DevPilot's own
+`http://localhost:8001/...`, and the client would follow it automatically,
+completely defeating the guard the tool's own docstring claims to have.
+Fixed by disabling automatic redirect-following and re-validating every
+hop's target through the exact same _reject_unsafe_url() check, capped at
+MAX_REDIRECTS. Residual, deliberately-not-closed risk: _reject_unsafe_url
+still resolves DNS once and checks that IP, then the actual request
+resolves again independently -- a narrow DNS-rebinding window exists
+between the two lookups. Closing that fully would need pinning the
+connection to the already-resolved IP (a custom transport), which is real
+added complexity for a threat that needs an attacker controlling
+authoritative DNS with split-second timing; the redirect bypass fixed here
+was the practical, actually-reachable gap.
 """
 
 import ipaddress
 import re
 import socket
 from html.parser import HTMLParser
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx2
 
@@ -21,6 +41,7 @@ from mcp.server import MCPServer
 
 REQUEST_TIMEOUT_SECONDS = 10
 MAX_PAGE_TEXT_CHARS = 5000
+MAX_REDIRECTS = 5
 DDG_HTML_ENDPOINT = "https://html.duckduckgo.com/html/"
 USER_AGENT = "Mozilla/5.0 (DevPilot AI learning project)"
 
@@ -142,26 +163,43 @@ def _reject_unsafe_url(url: str) -> None:
 
 @mcp.tool()
 def fetch_page(url: str) -> str:
-    """Fetch a URL and return its readable text content, capped in length."""
-    _reject_unsafe_url(url)
+    """Fetch a URL and return its readable text content, capped in length.
+    Redirects are followed manually (not by the HTTP client) so every hop
+    is re-validated against the same SSRF guard as the original URL --
+    otherwise a page could redirect straight past it."""
+    current_url = url
 
-    try:
-        with httpx2.Client(timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=True) as client:
-            response = client.get(url, headers={"User-Agent": USER_AGENT})
-    except httpx2.RequestError as exc:
-        raise ConnectionError(f"Could not fetch '{url}': {exc}") from exc
+    with httpx2.Client(timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=False) as client:
+        for _ in range(MAX_REDIRECTS + 1):
+            _reject_unsafe_url(current_url)
 
-    if response.status_code != 200:
-        raise RuntimeError(f"Fetching '{url}' returned unexpected status {response.status_code}.")
+            try:
+                response = client.get(current_url, headers={"User-Agent": USER_AGENT})
+            except httpx2.RequestError as exc:
+                raise ConnectionError(f"Could not fetch '{current_url}': {exc}") from exc
 
-    extractor = _TextExtractor()
-    extractor.feed(response.text)
-    text = re.sub(r"\s+", " ", " ".join(extractor.chunks)).strip()
+            if response.is_redirect:
+                location = response.headers.get("location")
+                if not location:
+                    raise RuntimeError(f"Redirect from '{current_url}' had no Location header.")
+                current_url = urljoin(current_url, location)
+                continue
 
-    if len(text) > MAX_PAGE_TEXT_CHARS:
-        text = text[:MAX_PAGE_TEXT_CHARS] + " [truncated]"
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Fetching '{current_url}' returned unexpected status {response.status_code}."
+                )
 
-    return text
+            extractor = _TextExtractor()
+            extractor.feed(response.text)
+            text = re.sub(r"\s+", " ", " ".join(extractor.chunks)).strip()
+
+            if len(text) > MAX_PAGE_TEXT_CHARS:
+                text = text[:MAX_PAGE_TEXT_CHARS] + " [truncated]"
+
+            return text
+
+    raise RuntimeError(f"Too many redirects fetching '{url}' (limit {MAX_REDIRECTS}).")
 
 
 if __name__ == "__main__":

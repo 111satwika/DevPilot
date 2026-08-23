@@ -1,5 +1,12 @@
 """Stage 3: exercising the Terminal MCP server.
 
+Entry 41 (gap-fix, 2026-08-23): the original "git --version (happy path)"
+call below no longer applies -- git was removed from Terminal's allow-list
+entirely, because allowing it here let any git subcommand (including
+`push --force`, `commit`, `reset --hard`) bypass Git MCP's dedicated
+approval gates. Replaced with a demonstration that it's now correctly
+rejected, same as `rm` already was.
+
 Run from the project root: python -m mcp_client.stage3_client
 """
 
@@ -32,7 +39,9 @@ async def main() -> None:
         result = await client.call_tool(
             "execute_command", {"command": "git", "args": ["--version"]}
         )
-        _print_result("git --version (happy path)", result)
+        _print_result(
+            "git --version (should be rejected -- use Git MCP instead, Entry 41)", result
+        )
 
         result = await client.call_tool(
             "execute_command",

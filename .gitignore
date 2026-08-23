@@ -23,6 +23,13 @@ mcp_client/memory/project_memory.json
 # scoped per project, not something to commit into DevPilot's own repo
 conversation_history/
 
+# Append-only tool-invocation audit log (Entry 41) -- same reasoning as
+# conversation_history/: real per-project runtime data, not source
+audit_log/
+
 # Secrets -- never commit these, even if one shows up locally later
 .env
 *.env
+
+# pytest cache (Entry 41)
+.pytest_cache/

@@ -8,6 +8,17 @@ Stage 8: write_file — the first write-capable tool, gated behind MCP's
 native elicitation (human-in-the-loop) mechanism, layered on top of the
 same sandbox check, not replacing it. Full rationale logged in
 DevPilot_AI_Implementation_Log.html Entry 12.
+
+Entry 41 (gap-fix, 2026-08-23): read_file had zero secret filtering since
+Stage 1 -- it would happily return a `.env` file's real contents, or a
+private key, straight into the model's context, despite the design doc's
+§19 explicitly requiring this never happen. Now refuses known
+credential-file patterns outright (mcp_servers.security.is_secret_filename)
+and redacts secret-shaped substrings from whatever content it does return
+(mcp_servers.security.redact_secrets), as a backstop for secrets embedded
+in ordinary files that aren't blocked by name. Also excluded node_modules/
+dist/build/etc. from search_files -- previously only .venv/__pycache__/.git
+were skipped, so searching a JS project would recurse into node_modules.
 """
 
 from datetime import datetime, timezone
@@ -18,11 +29,16 @@ from pydantic import BaseModel
 from mcp.server import MCPServer
 from mcp.server.mcpserver import AcceptedElicitation, Context
 
+from mcp_servers.security import is_secret_filename, redact_secrets
 from mcp_servers.workspace import resolve_workspace_root
 
 WORKSPACE_ROOT = resolve_workspace_root()
 
-_EXCLUDED_DIR_NAMES = {".venv", "__pycache__", ".git"}
+_EXCLUDED_DIR_NAMES = {
+    ".venv", "venv", "env", "__pycache__", ".git",
+    "node_modules", "dist", "build", ".next", ".turbo",
+    ".pytest_cache", ".mypy_cache", ".cache", "target",
+}
 
 mcp = MCPServer("DevPilot Filesystem")
 
@@ -39,13 +55,22 @@ def _resolve_within_workspace(path: str) -> Path:
 
 @mcp.tool()
 def read_file(path: str) -> str:
-    """Read a text file's contents from within the DevPilot workspace."""
+    """Read a text file's contents from within the DevPilot workspace.
+    Refuses known credential-file patterns outright (.env, *.pem, id_rsa,
+    ...) and redacts secret-shaped substrings from whatever content it
+    does return, as a backstop -- see mcp_servers/security.py."""
     target = _resolve_within_workspace(path)
 
     if not target.is_file():
         raise FileNotFoundError(f"No such file: '{path}'")
 
-    return target.read_text(encoding="utf-8")
+    if is_secret_filename(target.name):
+        raise PermissionError(
+            f"Refusing to read '{path}': it matches a known credential-file "
+            f"pattern. DevPilot never loads secret files into the model's context."
+        )
+
+    return redact_secrets(target.read_text(encoding="utf-8"))
 
 
 @mcp.tool()

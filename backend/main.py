@@ -47,11 +47,22 @@ Entry 38: /ask accepts an optional mode ("ask"|"plan"|"agent"), passed
 straight through to llm/agent.py's ask() -- see that module for what
 each mode restricts.
 
+Entry 41 (gap-fix, 2026-08-23): new GET /status. GET /health only ever
+proved this FastAPI process itself was up -- it says nothing about
+whether Ollama or Docker (both reached through WSL, both real external
+dependencies) are actually reachable, so a dead Ollama container surfaced
+as a confusing multi-minute timeout on the first /ask instead of a fast,
+specific error. The design doc's Reliability section explicitly calls for
+per-dependency health checks; /status is that, deliberately kept separate
+from /health so the VS Code extension's fast 500ms health-polling loop
+(Entry 27) isn't slowed down by multi-second WSL subprocess calls.
+
 Run from the project root: uvicorn backend.main:app --port 8001
 (or just `devpilot` from inside the project you want it to work on --
 Entry 26)
 """
 
+import asyncio
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -68,6 +79,8 @@ from backend.sessions import (
     resume_conversation,
     start_session,
 )
+from llm.agent import check_ollama_reachable
+from mcp_servers.docker.server import check_docker_reachable
 from mcp_servers.workspace import resolve_workspace_root
 
 app = FastAPI(title="DevPilot AI")
@@ -136,6 +149,24 @@ def health() -> dict:
 @app.get("/workspace")
 def workspace() -> dict:
     return {"workspace_root": str(resolve_workspace_root())}
+
+
+@app.get("/status")
+async def status() -> dict:
+    """Per-dependency reachability, unlike the bare process-liveness check
+    GET /health gives. Both checks run with their own short timeout and
+    concurrently, so a slow/unreachable dependency still returns promptly
+    instead of stacking delays."""
+    ollama_task = asyncio.create_task(check_ollama_reachable())
+    docker_status = await asyncio.to_thread(check_docker_reachable)
+    ollama_status = await ollama_task
+    return {
+        "workspace_root": str(resolve_workspace_root()),
+        "components": {
+            "ollama": ollama_status,
+            "docker": docker_status,
+        },
+    }
 
 
 @app.post("/ask", response_model=AskAccepted)

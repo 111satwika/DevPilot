@@ -12,6 +12,14 @@ Stage 10: wired in SessionMemory (this run only) and ProjectMemory
 (persists across separate runs via a JSON file) -- see memory.py and
 Entry 14.
 
+Entry 41 (gap-fix, 2026-08-23): the original plan ran `git status`/`git
+log` through Terminal MCP's execute_command, since Git MCP didn't exist
+yet at Stage 9. Terminal no longer allows `git` at all (it was a real
+approval-bypass around Git MCP's own gates -- see mcp_servers/terminal/
+server.py), so this plan now calls Git MCP's git_status/git_log directly
+instead -- still a 2-server plan (filesystem + git), same teaching point,
+now via the tool that's actually meant to answer it.
+
 Run from the project root: python -m mcp_client.planner
 """
 
@@ -24,9 +32,9 @@ from mcp import Client
 
 from mcp_client.memory import ProjectMemory, SessionMemory
 from mcp_servers.filesystem.server import mcp as filesystem_mcp
-from mcp_servers.terminal.server import mcp as terminal_mcp
+from mcp_servers.git.server import mcp as git_mcp
 
-SERVERS = {"filesystem": filesystem_mcp, "terminal": terminal_mcp}
+SERVERS = {"filesystem": filesystem_mcp, "git": git_mcp}
 
 
 @dataclass
@@ -38,18 +46,8 @@ class Step:
 
 
 PLAN = [
-    Step(
-        "Check what's changed",
-        "terminal",
-        "execute_command",
-        {"command": "git", "args": ["status", "--short"]},
-    ),
-    Step(
-        "Check recent history",
-        "terminal",
-        "execute_command",
-        {"command": "git", "args": ["log", "-5", "--oneline"]},
-    ),
+    Step("Check what's changed", "git", "git_status", {}),
+    Step("Check recent history", "git", "git_log", {"limit": 5}),
     Step(
         "Read current dependencies",
         "filesystem",

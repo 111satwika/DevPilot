@@ -11,8 +11,24 @@ dependencies = [
     "pydantic",
 ]
 
+# Entry 41 (gap-fix): first automated test suite in this project -- prior
+# verification was manual/live only (see DevPilot_AI_Implementation_Log.html).
+# httpx is needed only for FastAPI's TestClient in tests/test_status_endpoint.py
+# -- the app itself still uses httpx2 (see DevPilot_AI_Learning_Log.md's
+# 2026-08-10 decision on why httpx2, not httpx, is the runtime dependency).
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+]
+
 [project.scripts]
 devpilot = "devpilot_cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [tool.setuptools]
 py-modules = ["devpilot_cli"]
