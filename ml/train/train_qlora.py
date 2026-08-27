@@ -164,7 +164,20 @@ def _run_train(args) -> None:  # pragma: no cover -- needs a real GPU + bitsandb
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL, quantization_config=bnb_config, device_map="auto"
     )
-    model = prepare_model_for_kbit_training(model)
+    # Confirmed live (first real Colab run): a batch of 4 real examples
+    # OOM'd a T4 (16GB) on the very first backward pass -- 14.17/14.56 GB
+    # already in use before the failed 2.64 GB allocation. Qwen's ~152k
+    # vocabulary is the likely dominant cost here, not model weights (tiny
+    # at 4-bit): the output logits tensor scales with
+    # batch_size * seq_len * vocab_size, and real examples run up to
+    # ~3,867 tokens (Concept #40) -- one batch of 4 long sequences can be
+    # several GB just for logits. use_gradient_checkpointing explicit here
+    # (not relying on this function's own default) plus
+    # gradient_checkpointing_kwargs to avoid the reentrant-autograd/PEFT
+    # interaction issue that setting persists.
+    model = prepare_model_for_kbit_training(
+        model, use_gradient_checkpointing=True, gradient_checkpointing_kwargs={"use_reentrant": False}
+    )
     model = get_peft_model(
         model,
         LoraConfig(
@@ -186,6 +199,8 @@ def _run_train(args) -> None:  # pragma: no cover -- needs a real GPU + bitsandb
         warmup_steps=warmup_steps,
         per_device_train_batch_size=args.per_device_batch_size,
         gradient_accumulation_steps=args.grad_accum_steps,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         bf16=True,
         logging_steps=10,
         save_strategy="epoch",
@@ -230,8 +245,13 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=Path("ml/train/out/qlora-adapter"))
     parser.add_argument("--max-seq-len", type=int, default=MAX_SEQ_LEN)
     parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--per-device-batch-size", type=int, default=4, dest="per_device_batch_size")
-    parser.add_argument("--grad-accum-steps", type=int, default=4, dest="grad_accum_steps")
+    # Defaults changed from the original plan's 4/4 after a real T4 OOM'd
+    # on the very first backward pass at batch_size=4 (see the comment in
+    # _run_train, near prepare_model_for_kbit_training). 1/16 keeps the
+    # same effective batch size (16) while cutting the per-step memory
+    # that scales with batch_size * seq_len * vocab_size by 4x.
+    parser.add_argument("--per-device-batch-size", type=int, default=1, dest="per_device_batch_size")
+    parser.add_argument("--grad-accum-steps", type=int, default=16, dest="grad_accum_steps")
     parser.add_argument(
         "--dry-run", action="store_true",
         help="load + tokenize real data against the real tokenizer and report stats; skip model load and training entirely (no GPU needed)",
