@@ -1,15 +1,18 @@
 """Tests for the CPU-testable parts of ml/train/train_qlora.py -- the
-data-loading wrapper and the warmup-step computation. The actual QLoRA
-training loop (_run_train) needs a real GPU + CUDA bitsandbytes and is
-explicitly marked `# pragma: no cover` in the script itself; nothing here
-pretends to test that part.
+data-loading wrapper, the warmup-step computation, and _run_train's
+empty-dataset early exit. The actual QLoRA training loop past that point
+needs a real GPU + CUDA bitsandbytes and is explicitly marked
+`# pragma: no cover` in the script itself; nothing here pretends to test
+that part.
 """
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from ml.train.train_qlora import _compute_warmup_steps, _load_tokenized_dataset
+from ml.train.train_qlora import _compute_warmup_steps, _load_tokenized_dataset, _run_train
 
 transformers = pytest.importorskip("transformers")
 
@@ -54,6 +57,30 @@ def test_load_tokenized_dataset_drops_oversized_examples(tmp_path, tokenizer):
     records = _load_tokenized_dataset(path, tokenizer, max_seq_len=64)
 
     assert records == []
+
+
+def test_run_train_fails_fast_on_empty_dataset_before_any_gpu_code(tmp_path, tokenizer):
+    """Confirmed live on the first real Colab run: an empty train_dataset
+    used to reach SFTTrainer's __init__ fine and crash deep inside it
+    with a bare StopIteration -- AFTER the ~3GB base model had already
+    been downloaded and LoRA-wrapped. This must fail immediately instead,
+    before any of that -- and since the check happens before model
+    load/quantization, it's testable here with no GPU at all."""
+    empty_train = tmp_path / "empty_train.jsonl"
+    empty_train.write_text("", encoding="utf-8")
+
+    args = SimpleNamespace(
+        train=empty_train,
+        eval=tmp_path / "does_not_exist.jsonl",
+        output_dir=tmp_path / "out",
+        max_seq_len=4096,
+        epochs=3,
+        per_device_batch_size=4,
+        grad_accum_steps=4,
+    )
+
+    with pytest.raises(SystemExit, match="No training examples loaded"):
+        _run_train(args)
 
 
 class TestComputeWarmupSteps:

@@ -134,6 +134,23 @@ def _run_train(args) -> None:  # pragma: no cover -- needs a real GPU + bitsandb
     if eval_dataset is not None:
         print(f"Eval examples: {len(eval_dataset)}")
 
+    if len(train_dataset) == 0:
+        # Confirmed live (first real Colab run): an empty train_dataset
+        # reaches SFTTrainer's own __init__ fine, then crashes deep inside
+        # it with a bare `StopIteration` from `next(iter(train_dataset))`
+        # -- AFTER the base model has already been downloaded (~3GB) and
+        # LoRA-wrapped. Failing here instead means an empty/missing
+        # dataset (e.g. ml/data/build_dataset.py was never run in this
+        # session, or ran in a Colab session that then disconnected and
+        # wiped /content) costs a fast, clear error instead of minutes of
+        # wasted download + a cryptic traceback.
+        raise SystemExit(
+            f"No training examples loaded from {args.train} -- did you run "
+            f"ml.data.mine_real_traces / generate_adversarial / build_dataset "
+            f"in this session? (Colab wipes /content on disconnect, so a "
+            f"dataset built in an earlier session won't still be here.)"
+        )
+
     warmup_steps = _compute_warmup_steps(
         len(train_dataset), args.per_device_batch_size, args.grad_accum_steps, args.epochs
     )
