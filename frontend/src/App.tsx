@@ -27,8 +27,9 @@ interface PendingApproval {
 }
 
 interface SessionView {
-  status: "running" | "awaiting_approval" | "done" | "error";
+  status: "running" | "awaiting_approval" | "awaiting_plan_approval" | "done" | "error";
   pending: PendingApproval | null;
+  plan: string[] | null;
   answer: string | null;
   tool_calls: ToolCall[] | null;
   error: string | null;
@@ -48,12 +49,16 @@ interface ConversationDetail {
   turns: { question: string; answer: string; tool_calls: ToolCall[] }[];
 }
 
-type Mode = "ask" | "plan" | "agent";
+type Mode = "ask" | "plan" | "agent" | "planner";
 
 const MODE_INFO: Record<Mode, { label: string; description: string }> = {
   ask: { label: "Ask", description: "Plain conversation, no tools -- no project access" },
   plan: { label: "Plan", description: "Explores and plans, read-only -- never writes or executes" },
   agent: { label: "Agent", description: "Full access, mutations still require your approval" },
+  planner: {
+    label: "Planner",
+    description: "Shows a step-by-step plan first, waits for your approval, then executes it",
+  },
 };
 
 // Set by the VS Code extension via a ?theme= query param on this page's
@@ -73,6 +78,7 @@ function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingApproval | null>(null);
+  const [pendingPlan, setPendingPlan] = useState<string[] | null>(null);
   // The conversation's identity, persisted across turns (unlike sessionId
   // above, which is cleared after each turn to stop that turn's polling).
   // Sent on every /ask so the backend continues the same conversation
@@ -117,6 +123,7 @@ function App() {
         if (cancelled) return;
 
         setPending(data.status === "awaiting_approval" ? data.pending : null);
+        setPendingPlan(data.status === "awaiting_plan_approval" ? data.plan : null);
 
         if (data.status === "done") {
           setTurns((prev) => [
@@ -259,6 +266,25 @@ function App() {
     }
   }
 
+  // Entry 46: the coarser-grained sibling of respondToApproval above --
+  // approves/declines the WHOLE generated plan, not one tool call.
+  async function respondToPlan(approved: boolean) {
+    if (!sessionId) return;
+    setPendingPlan(null); // optimistic -- the next poll confirms real state
+    try {
+      const response = await fetch(`${API_BASE}/session/${sessionId}/approve_plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved }),
+      });
+      if (!response.ok) {
+        throw new Error(`Backend returned ${response.status}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   return (
     <div className="app">
       <header className="app-header">
@@ -330,7 +356,24 @@ function App() {
           <div className="turn">
             <div className="message user-message">{pendingQuestion}</div>
 
-            {pending ? (
+            {pendingPlan ? (
+              <div className="message ai-message plan-request">
+                <div className="approval-label">DevPilot proposes this plan -- approve to carry it out</div>
+                <ol className="plan-steps">
+                  {pendingPlan.map((step, i) => (
+                    <li key={i}>{step}</li>
+                  ))}
+                </ol>
+                <div className="approval-actions">
+                  <button className="approve-btn" onClick={() => respondToPlan(true)}>
+                    Approve plan
+                  </button>
+                  <button className="decline-btn" onClick={() => respondToPlan(false)}>
+                    Decline
+                  </button>
+                </div>
+              </div>
+            ) : pending ? (
               <div className="message ai-message approval-request">
                 <div className="approval-label">DevPilot wants to run a tool that needs your approval</div>
                 <div className="approval-tool">{pending.tool}({JSON.stringify(pending.arguments)})</div>

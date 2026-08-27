@@ -57,6 +57,11 @@ per-dependency health checks; /status is that, deliberately kept separate
 from /health so the VS Code extension's fast 500ms health-polling loop
 (Entry 27) isn't slowed down by multi-second WSL subprocess calls.
 
+Entry 46: "planner" mode adds a second pause distinct from the existing
+per-tool-call one -- a whole generated plan waiting on a human decision.
+SessionView gained `plan`; new POST /session/{id}/approve_plan resolves
+it, mirroring /session/{id}/approve's shape exactly.
+
 Run from the project root: uvicorn backend.main:app --port 8001
 (or just `devpilot` from inside the project you want it to work on --
 Entry 26)
@@ -76,6 +81,7 @@ from backend.sessions import (
     SessionNotContinuableError,
     continue_session,
     resolve_pending,
+    resolve_plan,
     resume_conversation,
     start_session,
 )
@@ -96,7 +102,7 @@ app.add_middleware(
 class AskRequest(BaseModel):
     message: str
     session_id: str | None = None  # present -> continue that conversation
-    mode: str = "agent"  # "ask" | "plan" | "agent" -- see llm/agent.py
+    mode: str = "agent"  # "ask" | "plan" | "agent" | "planner" -- see llm/agent.py
 
 
 class AskAccepted(BaseModel):
@@ -112,6 +118,7 @@ class PendingApprovalView(BaseModel):
 class SessionView(BaseModel):
     status: str
     pending: PendingApprovalView | None = None
+    plan: list[str] | None = None
     answer: str | None = None
     tool_calls: list[dict] | None = None
     error: str | None = None
@@ -201,6 +208,7 @@ def get_session(session_id: str) -> SessionView:
     return SessionView(
         status=session.status,
         pending=pending,
+        plan=session.plan if session.status == "awaiting_plan_approval" else None,
         answer=session.result.answer if session.result else None,
         tool_calls=session.result.tool_calls if session.result else None,
         error=session.error,
@@ -213,6 +221,19 @@ def approve(session_id: str, request: ApproveRequest) -> dict:
         raise HTTPException(status_code=404, detail="Unknown session")
     if not resolve_pending(session_id, request.approved):
         raise HTTPException(status_code=409, detail="Session has no pending approval")
+    return {"ok": True}
+
+
+@app.post("/session/{session_id}/approve_plan")
+def approve_plan(session_id: str, request: ApproveRequest) -> dict:
+    """Entry 46: resolves a whole-plan approval ("planner" mode), the
+    coarser-grained sibling of /approve above -- same request/response
+    shape, deliberately, since the frontend's decision UI is the same
+    Approve/Decline pair for both."""
+    if session_id not in SESSIONS:
+        raise HTTPException(status_code=404, detail="Unknown session")
+    if not resolve_plan(session_id, request.approved):
+        raise HTTPException(status_code=409, detail="Session has no pending plan")
     return {"ok": True}
 
 

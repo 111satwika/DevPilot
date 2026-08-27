@@ -366,6 +366,24 @@ body {
   background: var(--warning-bg);
 }
 
+/* Entry 46: same warning-toned card as .approval-request (whole-plan
+   approval is the same kind of "please confirm before I proceed" pause,
+   just coarser-grained than a single tool call). */
+.plan-request {
+  border: 1px solid var(--warning-border);
+  background: var(--warning-bg);
+}
+
+.plan-steps {
+  margin: 0 0 0.8rem 1.1rem;
+  padding: 0;
+  color: var(--text);
+  font-size: 0.88rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
 .approval-label {
   color: var(--text);
   font-weight: 650;

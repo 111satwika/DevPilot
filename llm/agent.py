@@ -94,6 +94,27 @@ only trusts names already in the offered tool list. No auto-accept-edits
 option exists or is planned -- every gated mutation stays
 manual-approval-only in every mode, unchanged since Entry 24.
 
+Entry 46 (2026-08-24): a real planning engine, closing the gap the design
+doc itself named as a Future Enhancement ("Add lightweight planner") and
+finishing Concept #19's separation ("plan generation vs. plan execution
+are separable" -- Stage 9's planner.py proved execution only, against a
+hardcoded plan). New "planner" mode: _generate_plan() asks the model for
+a short, ordered, human-readable plan (a JSON array of step
+descriptions, no tool calls made yet) given the user's request and the
+full tool list as context. The plan is shown to the user and held at a
+new AgentSession status ("awaiting_plan_approval") until a human
+approves or declines the *whole plan* -- a second, coarser-grained
+approval layer sitting in front of the existing per-tool-call one
+(GATED_TOOLS calls inside an approved plan still separately pause for
+their own approval when actually executed, unchanged). On approval, the
+plan is folded into the turn's message as guidance and execution falls
+through into the exact same iterative tool-calling loop every other mode
+already uses -- deliberately not a separate step-executor, so real
+intermediate results (a file's real content, a command's real exit code)
+still drive what the model actually does next, rather than locking
+execution to arguments guessed before anything was inspected. Full
+rationale and design tradeoffs in DevPilot_AI_Learning_Log.md.
+
 Entry 41 (gap-fix, 2026-08-23): two additions.
 
 1. `execute_command` moved into GATED_TOOLS. Terminal MCP's own allow-list
@@ -166,6 +187,12 @@ OLLAMA_CONTEXT_LENGTH = 4096
 # browse-then-read-then-answer sequences room to finish, at the cost of
 # more time on questions that do end up needing every turn.
 MAX_ITERATIONS = 12
+# Entry 46: caps a generated plan's length -- a runaway/degenerate plan
+# (the model listing 30 trivial steps) would just mean 30x the manual
+# approval-reading effort for no real benefit; same "bound the loop"
+# instinct as MAX_ITERATIONS, applied to plan generation instead of tool
+# calling.
+MAX_PLAN_STEPS = 8
 
 SYSTEM_PROMPT = (
     "You are DevPilot AI's tool-using assistant. Use the available tools to "
@@ -264,7 +291,33 @@ MODE_PROMPTS = {
         "switch to Agent mode."
     ),
     "agent": "",
+    # Entry 46: this is the instruction used for the EXECUTION half of
+    # Planner mode (after the human has already approved a shown plan) --
+    # generation itself uses a separate, dedicated prompt (see
+    # PLAN_GENERATION_PROMPT below), not this one.
+    "planner": "",
 }
+
+# Entry 46: used only to GENERATE a plan -- a one-shot, tool-free text
+# response (tools=[] is passed to Ollama for this call), never used for
+# actually executing anything. Asks for a JSON array so parsing is
+# mechanical, same fenced-block convention Entry 35's hallucination
+# rescue already established for this codebase.
+PLAN_GENERATION_PROMPT = (
+    "You are DevPilot AI's planning assistant. Given the user's request "
+    "and the list of tools available below, do NOT call any tools or take "
+    "any action yet. Instead, produce a short, ordered plan (at most "
+    f"{MAX_PLAN_STEPS} steps) describing, in plain language, what you "
+    "will do to accomplish the request -- e.g. \"Read package.json to "
+    "find the test command\", \"Run the test suite\", \"Inspect the "
+    "failure output\". Each step should be a single, concrete action, not "
+    "a vague goal. Respond with ONLY a JSON array of short strings inside "
+    "a fenced code block, nothing else, for example:\n"
+    "```json\n"
+    '["Read package.json to find the test command", "Run the test suite", '
+    '"Explain any failures found"]\n'
+    "```"
+)
 
 _tool_server: dict[str, str] = {}
 
@@ -285,6 +338,16 @@ class PendingApproval:
 
 
 @dataclass
+class PendingPlanApproval:
+    """Entry 46: a *whole generated plan* waiting on a human decision --
+    coarser-grained than PendingApproval above (which gates one tool
+    call). Approving a plan doesn't skip individual GATED_TOOLS calls
+    encountered while carrying it out; both layers apply independently."""
+    steps: list[str]
+    decision: "asyncio.Future[bool]"
+
+
+@dataclass
 class AgentSession:
     """Tracks one conversation. Status: running -> awaiting_approval (0+
     times) -> done | error, then back to running if continued with
@@ -297,10 +360,19 @@ class AgentSession:
     tool_calls} record per completed exchange -- backend/sessions.py
     appends to it and persists it via backend/history.py so a
     conversation survives a backend restart, not just this process's
-    lifetime."""
+    lifetime.
+
+    Entry 46: plan/pending_plan support "planner" mode's extra phase --
+    status can also become "awaiting_plan_approval" before any tool is
+    ever called. Both fields are scoped to the CURRENT turn only (unlike
+    messages/turns, which persist across the whole conversation) -- a new
+    planner-mode question generates and holds a fresh plan, it doesn't
+    reuse a previous turn's."""
     id: str
     status: str = "running"
     pending: PendingApproval | None = None
+    plan: list[str] | None = None
+    pending_plan: PendingPlanApproval | None = None
     result: AgentResult | None = None
     error: str | None = None
     messages: list[dict] = field(default_factory=list)
@@ -545,6 +617,56 @@ def _extract_hallucinated_tool_calls(content: str, known_tool_names: set[str]) -
     return calls
 
 
+_JSON_ARRAY_BLOCK_RE = re.compile(r"```(?:json)?\s*(\[.*?\])\s*```", re.DOTALL)
+
+
+def _parse_plan_steps(content: str) -> list[str]:
+    """Extract a JSON array of step strings from the model's plan-
+    generation response. Tries the fenced-block convention first (what
+    PLAN_GENERATION_PROMPT actually asks for); falls back to scanning the
+    raw text for a bare JSON array; falls back again to treating each
+    non-empty line as one step (stripping a leading number/bullet) so a
+    model that ignores the JSON instruction still produces *something*
+    usable instead of a hard failure. Always capped at MAX_PLAN_STEPS."""
+    match = _JSON_ARRAY_BLOCK_RE.search(content)
+    candidate = match.group(1) if match else content
+
+    try:
+        parsed = json.loads(candidate)
+        if isinstance(parsed, list) and all(isinstance(s, str) for s in parsed):
+            steps = [s.strip() for s in parsed if s.strip()]
+            if steps:
+                return steps[:MAX_PLAN_STEPS]
+    except json.JSONDecodeError:
+        pass
+
+    fallback_steps = []
+    for line in content.splitlines():
+        cleaned = re.sub(r"^\s*(?:[-*]|\d+[.):])\s*", "", line).strip()
+        if cleaned:
+            fallback_steps.append(cleaned)
+    return fallback_steps[:MAX_PLAN_STEPS] or ["Investigate the request and report back."]
+
+
+async def _generate_plan(user_message: str, all_tools: list[dict]) -> list[str]:
+    """One-shot, tool-free call: ask the model to describe its intended
+    approach before doing anything. tools=[] is passed to _ollama_chat
+    deliberately -- this call must never itself invoke a real tool, only
+    describe a plan to invoke tools later, once approved."""
+    tool_summary = "\n".join(
+        f"- {t['function']['name']}: {t['function']['description']}" for t in all_tools
+    )
+    messages = [
+        {"role": "system", "content": PLAN_GENERATION_PROMPT},
+        {
+            "role": "user",
+            "content": f"Available tools:\n{tool_summary}\n\nUser request: {user_message}",
+        },
+    ]
+    message = await asyncio.to_thread(_ollama_chat, messages, [])
+    return _parse_plan_steps(message.get("content", ""))
+
+
 async def ask(
     user_message: str, session: AgentSession | None = None, mode: str = "agent"
 ) -> AgentResult:
@@ -569,8 +691,54 @@ async def ask(
     injected into this turn's own message content (not the stored
     session.turns shown in the UI, which stays the user's raw text) so
     the model is told about the current mode even mid-conversation,
-    where the original system prompt was fixed on turn 1."""
+    where the original system prompt was fixed on turn 1.
+
+    Entry 46: mode "planner" runs an extra phase before any of the above --
+    generate a plan (_generate_plan), hold it for a whole-plan human
+    decision (session.status = "awaiting_plan_approval"), then either
+    stop (declined) or fold the approved plan into this turn's message
+    and fall through into the exact same execution path "agent" mode
+    uses, with full tool access."""
     all_tools = await _discover_tools()
+
+    if mode == "planner":
+        if session is None:
+            return AgentResult(
+                answer="Planner mode requires an active session (nowhere to hold the plan for approval).",
+                tool_calls=[],
+            )
+        plan_steps = await _generate_plan(user_message, all_tools)
+        decision: "asyncio.Future[bool]" = asyncio.get_running_loop().create_future()
+        session.plan = plan_steps
+        session.pending_plan = PendingPlanApproval(steps=plan_steps, decision=decision)
+        session.status = "awaiting_plan_approval"
+        approved = await decision
+        session.pending_plan = None
+        session.status = "running"
+        audit.record(
+            session_id=session.id,
+            tool="__plan__",
+            arguments={"steps": plan_steps},
+            gated=True,
+            approved=approved,
+            result_preview="approved -- proceeding to execute" if approved else "declined",
+        )
+        if not approved:
+            return AgentResult(
+                answer="The plan was not approved -- no tools were called and nothing was changed.",
+                tool_calls=[],
+            )
+
+        plan_text = "\n".join(f"{i}. {s}" for i, s in enumerate(plan_steps, 1))
+        user_message = (
+            f"You already proposed this plan and the user approved it:\n{plan_text}\n\n"
+            f"Carry it out now, step by step, using the available tools -- call a tool "
+            f"for each step in order, and briefly say what you're doing at each step. "
+            f"If a step turns out to need a different action once you see real results "
+            f"from an earlier step, adapt it and explain why. Original request: {user_message}"
+        )
+        mode = "agent"  # execution gets full tool access, same as Agent mode
+
     tools = _tools_for_mode(all_tools, mode)
     print(
         f"Mode={mode!r}: offering {len(tools)}/{len(all_tools)} tools: "

@@ -35,6 +35,11 @@ resume_conversation() already does before giving up.
 Entry 38: start_session()/continue_session() take a mode
 ("ask"|"plan"|"agent"), passed straight through to ask() -- see
 llm/agent.py for what each mode actually restricts.
+
+Entry 46: "planner" mode adds a second, coarser-grained pause -- a whole
+generated plan awaiting a human decision (session.pending_plan/status
+"awaiting_plan_approval"), separate from resolve_pending()'s per-tool-
+call approval. resolve_plan() below resolves that Future the same way.
 """
 
 import asyncio
@@ -62,6 +67,12 @@ async def _run(session: AgentSession, message: str, mode: str) -> None:
                 "question": message,
                 "answer": session.result.answer,
                 "tool_calls": session.result.tool_calls,
+                # ml/data/mine_real_traces.py needs to know which mode was
+                # active for this turn to reconstruct the exact tool
+                # schema the model saw -- mode can change turn to turn
+                # (Entry 38), so it has to be recorded per-turn, not
+                # assumed from the conversation as a whole.
+                "mode": mode,
             }
         )
         history.save_turn(session.id, session.messages, session.turns)
@@ -124,4 +135,15 @@ def resolve_pending(session_id: str, approved: bool) -> bool:
     if session is None or session.pending is None:
         return False
     session.pending.decision.set_result(approved)
+    return True
+
+
+def resolve_plan(session_id: str, approved: bool) -> bool:
+    """Same shape as resolve_pending, for the whole-plan approval Entry 46
+    adds. Returns False if there's no plan currently awaiting a decision
+    on this session."""
+    session = SESSIONS.get(session_id)
+    if session is None or session.pending_plan is None:
+        return False
+    session.pending_plan.decision.set_result(approved)
     return True

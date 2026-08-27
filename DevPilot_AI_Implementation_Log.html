@@ -5615,6 +5615,727 @@ if session is None:
   blending into the background.</p>
 </div>
 
+<h2 id="entry-41">Entry 41 — Security Gap-Audit Pass: Approval Bypass, Secrets, Audit Log, First Test Suite</h2>
+<div class="entry-meta">2026-08-23 · User-directed self-audit against this project's own design doc, not a user-reported bug · Status: <span class="status-done">five fixes implemented and tested; full narrative also in DevPilot_AI_Learning_Log.md Entries 41a–41e</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Asked to review the whole project for gaps against its own
+  design doc, then fix everything found in the same pass</strong> —
+  scoped deliberately broad rather than waiting for individual bug
+  reports, since a project with this much sandboxing/approval machinery
+  already built is exactly the kind where a systemic gap (one mechanism
+  quietly bypassable through a different path) is worth hunting for
+  directly.</p>
+
+  <p><strong>(a) Terminal MCP's approval bypass — the sharpest finding.</strong>
+  Terminal's own allow-list let bare <code>git</code> run with zero
+  approval — including <code>push --force</code>, <code>commit</code>,
+  <code>reset --hard</code> — completely bypassing Git MCP's dedicated
+  commit/push/branch-delete gates (Entry 16). The safety story Git MCP
+  was built for only held if the model happened to choose the Git MCP
+  tool over the Terminal one for the same action; it had no way to
+  actually enforce that choice.</p>
+
+  <p><strong>(b) No secret hygiene anywhere.</strong> <code>read_file</code>
+  had zero filtering since Stage 1 — it would return a real
+  <code>.env</code> file's contents or a private key straight into the
+  model's context, despite the design doc's §19 explicitly requiring this
+  never happen.</p>
+
+  <p><strong>(c) No audit trail.</strong> The design doc's Production
+  Considerations §1 has called for an append-only audit log of every
+  tool invocation since the plan was written; nothing implemented it.</p>
+
+  <p><strong>(d) No per-dependency health check.</strong> <code>GET /health</code>
+  only ever proved the FastAPI process itself was up — a dead
+  Ollama/Docker dependency surfaced as a confusing multi-minute timeout
+  instead of a fast, specific error.</p>
+
+  <p><strong>(e) Zero automated tests.</strong> Every verification through
+  Entry 40 was manual and live — real, but nothing would catch a future
+  change silently breaking the sandbox or an approval gate.</p>
+
+  <p><strong>Will do:</strong> remove git from Terminal's allow-list
+  entirely rather than trying to blocklist dangerous subcommands within
+  it (duplicating Git MCP's already-tested logic worse, in a second
+  place); route <code>execute_command</code> through the same
+  gated-tool stdio mechanism as every other approval-gated call; a new
+  <code>mcp_servers/security.py</code> for secret-file blocking +
+  redaction; a new <code>mcp_servers/audit.py</code>; a new
+  <code>GET /status</code> separate from the fast-polled
+  <code>GET /health</code>; a first <code>tests/</code> package + CI
+  workflow.<br>
+  <strong>Won't do:</strong> pattern-match dangerous git invocations
+  inside Terminal MCP instead of removing the capability — same
+  "mechanism over pattern-matching" preference as <code>shell=False</code>
+  and the read-only SQLite connection.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><strong>(a)</strong> <code>git</code> removed from
+  <code>ALLOWED_COMMANDS</code> in <code>mcp_servers/terminal/server.py</code>
+  — Git MCP is now the sole path for git operations. <code>execute_command</code>
+  joined <code>llm/agent.py</code>'s <code>GATED_TOOLS</code>, routed
+  through the real-stdio + <code>ctx.elicit()</code> path; mutating
+  npm/pip subcommands (install, uninstall, ci, ...) now require approval
+  via a new <code>ExecuteApproval</code> schema, everything else runs
+  immediately. As a side effect, this also closes a real secret-leak: the
+  in-memory <code>Client</code> path used for every ungated tool runs
+  inside the live backend process and inherits its full environment, so
+  <code>python -c "import os;print(os.environ)"</code> could have dumped
+  <code>GITHUB_TOKEN</code> into the model's context —
+  <code>stdio_client</code>'s fixed OS-level env allowlist (Entry 22)
+  closes that for free once <code>execute_command</code> is routed
+  through it. <code>mcp_client/stage3_client.py</code> and
+  <code>mcp_client/planner.py</code> updated (planner.py's git steps now
+  call Git MCP's <code>git_status</code>/<code>git_log</code> directly).</p>
+
+  <p><strong>(b)</strong> New <code>mcp_servers/security.py</code>:
+  <code>is_secret_filename()</code> blocks known credential-file patterns
+  (<code>.env</code>, <code>*.pem</code>, <code>id_rsa</code>,
+  <code>.npmrc</code>, ...) outright; <code>redact_secrets()</code>
+  scrubs secret-shaped substrings (API keys, GitHub/Slack tokens, private
+  key blocks, credentialed URLs, generic assignments) from any text as a
+  backstop. Wired into Filesystem's <code>read_file</code> (blocks +
+  redacts) and as a redaction-only backstop into Terminal, Git, and
+  Docker output. Also extended Filesystem's excluded-directory list
+  (node_modules/dist/build/.next/target/etc. — previously only
+  .venv/__pycache__/.git were skipped).</p>
+
+  <p><strong>(c)</strong> New <code>mcp_servers/audit.py</code>:
+  <code>record()</code> appends one JSON line per tool invocation
+  (session id, tool, secret-redacted arguments, gated/approved status,
+  secret-redacted result preview, error) to a per-project file under
+  <code>audit_log/</code>. Wired into <code>llm/agent.py</code>'s
+  <code>_call_mcp_tool</code>/<code>_call_gated_tool</code> via
+  <code>finally</code> blocks. Lives in <code>mcp_servers/</code>, not
+  <code>backend/</code>, specifically to avoid a
+  <code>backend → llm → backend</code> import cycle.</p>
+
+  <p><strong>(d)</strong> New <code>check_ollama_reachable()</code>
+  (resolves the Ollama container IP with a 3s cap, no chat call) and
+  <code>check_docker_reachable()</code> (<code>docker version</code> via
+  WSL, 5s cap); both never raise. Wired into a new <code>GET /status</code>,
+  both checks run concurrently so one slow dependency doesn't stack onto
+  the other's latency.</p>
+
+  <p><strong>(e)</strong> New <code>tests/</code> package:
+  <code>test_security.py</code>, <code>test_filesystem_server.py</code>,
+  <code>test_terminal_server.py</code>, <code>test_audit.py</code>,
+  <code>test_status_endpoint.py</code> — 25 tests, no WSL/Docker/Ollama
+  dependency. New <code>.github/workflows/ci.yml</code> runs the suite on
+  push/PR.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>All five verified with real, not just written, tests. <strong>(a)</strong>
+  <code>execute_command(command="git", ...)</code> returns a clear "not
+  allowed … use Git MCP" error; a non-mutating call still runs
+  immediately over the in-memory Client with no approval prompt; a
+  mutating <code>npm install left-pad</code> correctly required a real
+  stdio session and, driven through a fake approver, produced a genuine
+  <code>awaiting_approval</code> pause and an honored decline.
+  <strong>(b)</strong> <code>read_file('.env')</code> now returns
+  <code>is_error: True</code> with a clear refusal, never the real
+  value; a <code>.py</code> file with a hardcoded API key still reads
+  but with the value replaced by <code>[REDACTED:assigned secret]</code>;
+  <code>search_files</code> on a workspace with both
+  <code>node_modules/</code> and <code>src/</code> only returned the
+  <code>src/</code> match. <strong>(c)</strong> A live end-to-end run
+  confirmed the audit log recorded exactly one entry with
+  <code>gated: true, approved: false</code> matching a real declined
+  call. <strong>(d)</strong> <code>tests/test_status_endpoint.py</code>
+  confirms <code>/status</code> returns 200 with well-formed component
+  strings regardless of real reachability, and <code>/health</code>
+  itself is unaffected. <strong>(e)</strong> The first real
+  <code>pytest -q</code> run caught 6 real test bugs (a structured-
+  content-unwrapping mistake in a test helper, an <code>ExceptionGroup</code>
+  vs plain-exception assertion mismatch, a too-strict GitHub-token-length
+  + word-boundary gap in <code>redact_secrets()</code> that let a real
+  token slip through unredacted) — all fixed, then reran clean: 25
+  passed.</p>
+</div>
+
+<h2 id="entry-42">Entry 42 — Deeper Security Pass: SSRF-via-Redirect, Git Command Injection, a Frontend Bug</h2>
+<div class="entry-meta">2026-08-23–24 · A second, deeper "still any gaps?" pass, then closed out for real on "fix the gaps u listed" · Status: <span class="status-done">three fixes, the git one genuinely severe, all independently verified</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Asked to keep looking rather than stop at Entry 41.</strong>
+  Read every remaining unexamined file and grepped the whole tree for
+  known-risky patterns (<code>follow_redirects</code>, <code>shell=True</code>,
+  <code>verify=False</code>, <code>eval</code>, <code>pickle</code>,
+  unsafe <code>yaml.load</code>) rather than re-reviewing what Entry 41
+  already covered.</p>
+
+  <p><strong>(a) fetch_page's SSRF guard only checked the URL the caller
+  passed in.</strong> The client was configured with
+  <code>follow_redirects=True</code> — a 302 response could point
+  anywhere (<code>169.254.169.254</code>, DevPilot's own
+  <code>localhost:8001</code>) and the client would follow it with no
+  further check, completely defeating the guard the tool's own docstring
+  claims to have.</p>
+
+  <p><strong>(b) A genuinely severe one: git's remote-helper transport.</strong>
+  <code>git_push</code>'s <code>remote</code>/<code>branch</code> and
+  <code>git_create_branch</code>/<code>git_delete_branch</code>'s
+  <code>name</code> reached <code>argv</code> with zero validation. Two
+  distinct risks, not one: a leading <code>-</code> could be misread as a
+  flag, and git's own <code>ext::&lt;command&gt;</code> remote-helper
+  syntax makes a "remote" string execute that command as a literal shell
+  command — not argument confusion, intentional git behavior pointed at
+  an untrusted string. Human approval gates the call, but the approval
+  message shows the raw string with no indication it's a transport
+  directive rather than a name.</p>
+
+  <p><strong>(c) A smaller, real frontend bug.</strong>
+  <code>respondToApproval()</code> had no <code>.ok</code> check and no
+  <code>try/catch</code> — a failed approve/decline request (a stale
+  session, a network blip) left the user staring at "thinking…" forever
+  with zero indication anything had gone wrong.</p>
+
+  <p><strong>Will do:</strong> disable auto-follow-redirects and
+  re-validate every hop manually; reject a leading <code>-</code> and any
+  <code>x::</code> transport prefix in every caller-controlled git
+  identifier, before the approval prompt is even shown; wrap the
+  frontend's approve call in the same try/catch pattern every other fetch
+  in that file already uses.<br>
+  <strong>Won't do:</strong> try to escape/sanitize the git transport
+  string instead of rejecting it — there's no shell involved
+  (<code>shell=False</code> throughout), so this isn't an escaping
+  problem; it's git's own argument grammar intentionally treating that
+  prefix as "invoke this as a command," and the only correct fix is
+  refusing to pass such a value into argv at all.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><strong>(a)</strong> <code>fetch_page</code>: <code>follow_redirects=False</code>,
+  a manual loop re-running <code>_reject_unsafe_url()</code> on every
+  redirect target, capped at <code>MAX_REDIRECTS=5</code>.</p>
+
+  <p><strong>(b)</strong> New <code>_reject_unsafe_git_identifier()</code>
+  in <code>mcp_servers/git/server.py</code>, rejecting both shapes
+  (leading <code>-</code>, any <code>::</code> substring) before the
+  approval prompt, applied to <code>git_push</code>'s remote/branch and
+  <code>git_create_branch</code>/<code>git_delete_branch</code>'s name.</p>
+
+  <p><strong>(c)</strong> <code>App.tsx</code>'s <code>respondToApproval()</code>
+  wrapped in try/catch; non-2xx responses now surface through the
+  existing <code>error</code> state the same way every other fetch in
+  the component already does.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p><strong>(a)</strong> A live test against <code>httpbin.org/redirect-to</code>
+  was inconclusive (the service itself returned 503 in this environment —
+  a flaky external dependency, not a finding about the fix). Replaced
+  with <code>tests/test_browser_server.py</code>'s mocked-client tests (6
+  tests, no real network): a scripted redirect to
+  <code>169.254.169.254</code> and to <code>localhost:8001</code> are
+  both blocked before the unsafe URL is ever actually requested, a normal
+  multi-hop chain within the limit still resolves, exceeding
+  <code>MAX_REDIRECTS</code> is rejected, and the original
+  direct-localhost protection is unaffected.</p>
+
+  <p><strong>(b)</strong> 5 tests in <code>tests/test_git_server.py</code>,
+  2 of them driven through a genuine <code>stdio_client</code>/<code>ClientSession</code>
+  with a callback that approves everything — proving rejection happens
+  independent of, and before, any human decision.
+  <code>git_push(remote="ext::sh -c 'touch pwned'")</code> and
+  <code>remote="--upload-pack=x"</code> were both rejected over a real
+  stdio session with an always-approve callback, never reaching
+  <code>_run_git()</code>. A plain <code>git_status()</code> against a
+  non-repo workspace still returns its expected honest non-error result —
+  no regression.</p>
+
+  <p><strong>(c)</strong> Closed out properly rather than left at "type-
+  checks but unverified": a real headless-Chromium session against the
+  actual built <code>frontend/dist/</code> (Ollama/WSL/Docker genuinely
+  unreachable in this sandbox, so the three network calls involved were
+  intercepted) reached "awaiting approval," clicked Decline, and
+  confirmed a visible "Error: Backend returned 500" message renders
+  (screenshot captured). Then proved the bug was real, not just a
+  plausible-looking fix: <code>git stash</code>'d this exact change,
+  rebuilt, reran the identical script — it timed out waiting for the
+  error to ever appear, exactly the stuck-forever behavior being fixed.
+  Popped the stash, rebuilt, reran clean. Root-caused the build-tooling
+  failures hit along the way (an old Node version missing an optional
+  native dependency; an npm wrapper-script quirk in this specific shell)
+  as pre-existing environment issues unconnected to the edit, rather than
+  either silently working around them or misreporting "the build
+  passed."</p>
+</div>
+
+<h2 id="entry-43">Entry 43 — GitHub MCP's Remaining Six Design-Doc Tools</h2>
+<div class="entry-meta">2026-08-23 · On explicit "fix all the gaps" follow-up · Status: <span class="status-done">implemented, live-verified against the real GitHub API</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Revisited a call made earlier the same day.</strong> An
+  initial gap-audit pass had classified GitHub MCP's narrower-than-planned
+  scope (only <code>get_repository</code> existed; the design doc's
+  <code>list_files</code>/<code>search_code</code>/<code>get_file</code>/
+  <code>list_commits</code>/<code>get_commit</code>/<code>list_pull_requests</code>/
+  <code>get_pull_request</code> were never built) as an incremental-scope
+  decision, not a defect. Asked twice to fix everything, that
+  classification no longer stood — the tools were genuinely specified and
+  genuinely missing. Kept strictly read-only, matching the design doc's
+  own "Later" deferral of write operations
+  (create_branch/create_commit/create_pull_request stay unbuilt).</p>
+
+  <p><strong>Will do:</strong> add all seven remaining tools sharing one
+  request/error-mapping helper instead of copying
+  <code>get_repository</code>'s original inline version six more times;
+  reuse Entry 41's secret redaction for <code>get_file</code>, since it
+  returns real repository content that can contain a committed secret
+  just as easily as a local file can; verify every new tool against the
+  real GitHub API, not just mocks.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>New <code>_get()</code> helper (URL + auth headers + status-code
+  error mapping: 404 → <code>ValueError</code>, 401/403 →
+  <code>PermissionError</code> with a <code>GITHUB_TOKEN</code> hint,
+  network failure → <code>ConnectionError</code>) — <code>get_repository</code>
+  itself refactored to call it too, so its behavior is provably unchanged
+  rather than duplicated-and-hopefully-consistent. Seven new tools built
+  on it, all read-only. All wired into <code>PLAN_MODE_ALLOWED_TOOLS</code>
+  (Entry 38) alongside <code>get_repository</code>.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>14 mocked tests (fake <code>httpx2.Client</code>, no real network)
+  covering curated-field shapes, file-vs-directory mismatches, secret-
+  filename blocking (confirmed the request never reaches the network for
+  a blocked path), and 401/403/404 mapping. Also live-verified against
+  the real GitHub API (<code>modelcontextprotocol/python-sdk</code>):
+  <code>list_files</code>, <code>get_file</code> (real README content
+  decoded correctly), <code>list_commits</code>, <code>get_commit</code>,
+  <code>list_pull_requests</code>, and <code>get_pull_request</code> all
+  returned correct real data on the first live call.
+  <code>search_code</code>'s live call caught a real bug the unit tests
+  hadn't anticipated: GitHub returns 401, not 403, for this specific
+  endpoint unauthenticated — fixed by mapping both the same way, then
+  reconfirmed live.</p>
+</div>
+
+<h2 id="entry-45">Entry 45 — Docker MCP Argument-Injection Guard</h2>
+<div class="entry-meta">2026-08-23 · A fourth "still any gaps?" pass · Status: <span class="status-done">fixed, verified via real stdio sessions</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Treated Entry 42(b)'s git fix as a vulnerability class to
+  check everywhere, not a one-off patch to one server.</strong> Re-read
+  every subprocess-argv-building tool in the codebase specifically
+  checking for the same shape: a caller-controlled string reaching argv
+  as a bare positional argument, with nothing in front of it to consume
+  it as a flag's value. Found the identical gap in Docker MCP, never
+  checked against that specific lens before: <code>inspect_container</code>/
+  <code>get_container_logs</code>/<code>stop_container</code>'s
+  <code>container</code>, <code>run_container</code>'s <code>image</code>,
+  and <code>build_image</code>'s <code>tag</code> all had zero
+  validation. Deliberately checked for a Docker equivalent of git's
+  <code>ext::</code> remote-execution vector and found none — so this
+  closes the narrower argument-confusion risk, not a code-execution
+  one.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>New <code>_reject_flag_like()</code> rejects a leading <code>-</code>
+  on all four identifiers — before the approval prompt for the three
+  gated tools, before the docker call for the two ungated ones.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>6 tests in <code>tests/test_docker_server.py</code>, mirroring the
+  Git MCP test shape: <code>inspect_container</code>/<code>get_container_logs</code>
+  rejected via the in-memory Client (no approval involved, since these
+  are ungated); <code>build_image</code>/<code>run_container</code>/
+  <code>stop_container</code> rejected via a real <code>stdio_client</code>/
+  <code>ClientSession</code> with an always-approve callback, confirming
+  rejection happens before and independent of the human decision, never
+  reaching <code>_run_docker()</code>. A final regression check
+  confirmed an ordinary, non-flag-like container name is NOT rejected by
+  the new guard.</p>
+</div>
+
+<h2 id="entry-46">Entry 46 — A Real Planning Engine (Design Doc §13 / Future Enhancements)</h2>
+<div class="entry-meta">2026-08-24 · User asked directly: "did u implement planning engine" → "yes pls implement planning engine" · Status: <span class="status-done">implemented, tested, verified live in a real browser</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Closing a gap the design doc names itself.</strong> "Add
+  lightweight planner" sits under Future Enhancements — never built as a
+  real dynamic system. What existed instead: Stage 9's
+  <code>planner.py</code> proves multi-server <em>execution</em> against
+  a hardcoded plan (deliberately, since no LLM existed yet at Stage 9),
+  and "Plan mode" (Entry 38) is really just a read-only tool restriction —
+  the model writes a plan as prose, there's no structured plan object, no
+  separate generate-then-execute phases.</p>
+
+  <p><strong>Design choice: a new 4th mode ("planner"), not a
+  modification of Plan/Agent.</strong> Zero regression risk to three
+  already-working modes. Plan generation is a plain-language step list
+  (JSON array of strings), not a structured
+  <code>{tool, arguments}</code> list — considered the richer structure
+  first, then rejected it: pre-computing exact tool arguments before
+  anything has actually been inspected only works for the simplest plans,
+  and the design doc's own worked examples are themselves plain-language
+  step lists.</p>
+
+  <p><strong>Approved-plan execution reuses the existing iterative
+  tool-calling loop</strong> rather than a dedicated step executor — the
+  model still decides each real tool call as results come in, but now
+  against a plan the human has already seen and approved. Plan approval
+  is a second, independent pause layer sitting in front of the existing
+  per-tool-call approval, not a replacement for it — approving a plan
+  doesn't pre-authorize every mutating action it might turn out to
+  need.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><code>llm/agent.py</code>: <code>_generate_plan()</code> makes a
+  one-shot, tool-free Ollama call (<code>tools=[]</code>) asking for an
+  ordered JSON array of step descriptions, parsed by
+  <code>_parse_plan_steps()</code> with a fenced-JSON-block primary path
+  and a numbered/bulleted-line fallback, capped at
+  <code>MAX_PLAN_STEPS=8</code>. <code>ask()</code>'s new planner branch
+  generates the plan, stores it on <code>session.plan</code>, and awaits
+  a new <code>PendingPlanApproval</code> Future
+  (<code>session.status = "awaiting_plan_approval"</code>) exactly like
+  <code>_call_gated_tool</code>'s existing pattern, but for the whole
+  plan at once. On approval, the plan is folded into the turn's message
+  as guidance and <code>mode</code> becomes <code>"agent"</code> for
+  execution — falling through into the existing loop unchanged. The
+  whole-plan decision is also recorded to Entry 41(c)'s audit log as a
+  synthetic <code>"__plan__"</code> entry.</p>
+
+  <p>Backend: new <code>PendingPlanApproval</code> plumbing surfaced via
+  <code>backend/sessions.py</code>'s <code>resolve_plan()</code> and a
+  new <code>POST /session/{id}/approve_plan</code> mirroring
+  <code>/approve</code>'s shape; <code>SessionView</code> gained
+  <code>plan: list[str] | None</code>. Frontend: new "Planner" mode
+  option; a plan-approval card (numbered steps, Approve plan/Decline)
+  renders when <code>status === "awaiting_plan_approval"</code>, reusing
+  the existing approval-card styling.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Three layers. <code>tests/test_planner.py</code> (10 tests,
+  <code>_ollama_chat</code> mocked): JSON/fallback parsing including the
+  step cap, a full pause-then-decline run (session correctly reaches
+  <code>"awaiting_plan_approval"</code> with the real generated steps,
+  resolves cleanly with zero tool calls), a full pause-then-approve run
+  (confirmed the second mocked model call — the execution turn — actually
+  happens, proving the fall-through into the existing loop works), and
+  the fail-closed case with no session. <code>tests/test_plan_approval_endpoint.py</code>
+  (4 tests): the HTTP layer genuinely resolves the awaited Future, 404/409
+  for the same edge cases <code>/approve</code> already handles. Real
+  headless-Chromium session against the actual built UI (Ollama/WSL/Docker
+  mocked at the network layer, since none are reachable in this sandbox):
+  switched to Planner mode, sent a question, confirmed the plan card
+  rendered with the exact steps from the mocked response, clicked
+  Approve, confirmed the final answer and tool trace rendered afterward —
+  screenshots taken at both stages. Frontend type-checked clean via
+  <code>tsc -b</code>.</p>
+</div>
+
+<h2 id="entry-47">Entry 47 — Distilled Tool-Calling Model, Phase 1 (Dataset Pipeline)</h2>
+<div class="entry-meta">2026-08-27 · Status: <span class="status-done">implemented and run for real against the live pipeline</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>The pitch, and why it's not a bolt-on.</strong> DevPilot runs
+  a general-purpose Ollama model (<code>qwen2.5:7b-instruct</code>) that
+  has never seen DevPilot's own 33-tool surface or its 4-mode restriction
+  logic — so it picks the wrong tool sometimes, and emits arguments that
+  don't validate against the real schema. The hypothesis: a small model
+  (1.5B) fine-tuned specifically on DevPilot's own tools should beat the
+  general model at tool selection, while being faster and needing far
+  less VRAM. That's a real, measurable hypothesis — and finishing it end
+  to end (data → train → eval → quantize → serve, each phase actually
+  measured) is exactly the kind of complete lifecycle piece this
+  project's learning goals never touched. New top-level <code>ml/</code>
+  package, deliberately separate from <code>llm/</code> — the fine-tune
+  is offline tooling that produces an artifact <code>llm/agent.py</code>
+  will eventually load, not part of the live running agent.</p>
+
+  <p><strong>Two corrections to the original generic fine-tune plan,
+  made by actually checking DevPilot's own code rather than trusting the
+  plan at face value:</strong></p>
+  <ul>
+    <li>The plan's "ambiguous request → ask for clarification" data
+    bucket would have taught the model to <em>contradict</em> DevPilot's
+    own real <code>SYSTEM_PROMPT</code> (Entry 29), which explicitly
+    explores via <code>list_directory</code> on a vague request instead
+    of asking for specifics. Corrected to generate explore-first
+    examples instead.</li>
+    <li>Real usage volume doesn't exist yet — this environment has never
+    actually run a live Ollama call whose result got persisted (every
+    <code>conversation_history/</code> entry to date came from mocked or
+    tested runs). Rather than fabricate volume,
+    <code>mine_real_traces.py</code> honestly reports 0 examples today,
+    and a small addition (recording which <em>mode</em> was active per
+    turn, in <code>backend/sessions.py</code>) makes future real
+    conversations minable once the app is actually used.</li>
+  </ul>
+
+  <p><strong>Will do:</strong> a shared <code>TrainingExample</code>
+  schema (mode, exact system prompt, exact tool schemas offered, prior
+  messages, request, and a typed completion —
+  <code>tool_call</code>/<code>refusal</code>/<code>text</code>) so every
+  data source produces the same shape; a real-trace miner; a
+  template-based adversarial generator needing no API key, built from
+  DevPilot's actual <code>PLAN_MODE_ALLOWED_TOOLS</code>/<code>GATED_TOOLS</code>;
+  a teacher-distillation script (GPT-4o/Claude) for volume, written and
+  tested against a fake teacher since no real API key exists here; a
+  train/test splitter that holds out entire tool families and splits the
+  rest by a stable per-family slice, never a random per-example
+  shuffle.<br>
+  <strong>Won't do:</strong> fabricate real usage data that doesn't
+  exist; generate mode-violation-refusal data via an LLM when it can be
+  generated correctly and deterministically from DevPilot's own real
+  config instead.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><code>ml/data/schema.py</code> — the shared
+  <code>TrainingExample</code>/<code>Completion</code>/<code>ToolCall</code>
+  dataclasses and JSONL read/write helpers.</p>
+
+  <p><code>ml/data/mine_real_traces.py</code> — walks each persisted
+  conversation's raw message list, emitting one example per assistant
+  turn that made a real tool call (a final text-only turn is left to the
+  adversarial generator instead, since a real "no tool needed" turn
+  doesn't explain <em>why</em> without the mode context). Skips (and
+  counts, rather than guesses at) any turn saved before per-turn mode
+  tracking existed.</p>
+
+  <p><code>ml/data/generate_adversarial.py</code> — builds two buckets
+  directly from DevPilot's real mode/tool config: mode-violation
+  refusals (a request needing a tool absent from the current mode's
+  offered schema) for Ask and Plan modes, cross-checked against the real
+  <code>PLAN_MODE_ALLOWED_TOOLS</code>/<code>GATED_TOOLS</code> sets with
+  an assertion that fails loudly if a future gated tool ships with no
+  matching template; and explore-first examples (a vague request →
+  <code>list_directory</code>, per Entry 29) for Agent mode. Hand-written
+  request templates with slot-filled variation (filenames, branch names,
+  commit messages, ...) stand in for the natural-language variety an LLM
+  would otherwise provide, needing no API key.</p>
+
+  <p><code>ml/data/generate_teacher_traces.py</code> — pluggable
+  <code>TeacherClient</code> (OpenAI or Anthropic, raw REST calls via
+  <code>httpx2</code>, matching this project's established
+  minimal-dependency preference over adding a full provider SDK) asks a
+  real teacher model to generate realistic (request, arguments) pairs
+  per tool, against DevPilot's real tool schemas. Requires
+  <code>OPENAI_API_KEY</code> or <code>ANTHROPIC_API_KEY</code> to
+  actually run — neither exists in this environment.</p>
+
+  <p><code>ml/data/build_dataset.py</code> — combines every source,
+  holds three tool families out entirely (test-only, for measuring
+  generalization to an unseen tool from its schema alone), and splits
+  every other family by a stable tail slice of its own examples rather
+  than a random shuffle across the whole dataset — near-duplicate
+  template-generated phrasings for the same tool stay on one side of the
+  boundary instead of leaking accuracy-inflating near-duplicates across
+  it.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>26 new tests across 4 files, all passing.
+  <code>generate_adversarial.py</code> run for real, no mock needed: 51
+  examples generated deterministically (43 mode-violation, 8
+  explore-first). <code>mine_real_traces.py</code> tested against
+  fabricated <code>conversation_history</code> fixtures shaped exactly
+  like the real persisted format — the mining logic is proven correct
+  even though real data doesn't exist yet to mine. The full pipeline run
+  end to end for real:
+  <code>real_traces.jsonl</code> (0, expected and correct) +
+  <code>adversarial.jsonl</code> (51) → <code>train.jsonl</code> (33) +
+  <code>test.jsonl</code> (18). Verified the three held-out tool
+  families genuinely never appear in <code>train.jsonl</code> — via the
+  real <code>tool_family_holdout</code> field, not a naive text search
+  (a first grep-based spot-check was misleading, since a tool's name
+  also appears inside the full tool-schema list embedded in unrelated
+  Agent-mode examples; re-checked properly by parsing the field itself).</p>
+</div>
+
+<h2 id="entry-48">Entry 48 — Distilled Tool-Calling Model, Phase 2 (QLoRA Training Script)</h2>
+<div class="entry-meta">2026-08-27 · Continues Entry 47's fine-tune project · Status: <span class="status-done">data/tokenization core verified against the real base-model tokenizer and the real installed training stack; the actual GPU training run is not executable in this environment and is explicitly flagged as such</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Honesty constraint, stated up front rather than discovered
+  later:</strong> this environment has no GPU
+  (<code>torch.cuda.is_available()</code> → <code>False</code>, no
+  <code>nvidia-smi</code>). The actual <code>trainer.train()</code> call
+  cannot be executed here — it has to run on a free Colab/Kaggle T4, per
+  the original plan. Rather than write the training script from
+  documentation/memory alone and hope it's right, this environment does
+  have real network access and CPU-capable <code>transformers</code>, so
+  everything that <em>can</em> be verified without a GPU — the real base
+  model's tokenizer and chat template, and the real installed
+  PEFT/TRL/bitsandbytes API surface — was verified directly instead of
+  assumed.</p>
+
+  <p><strong>Two real findings from that verification, not from reading
+  the spec:</strong></p>
+  <ul>
+    <li>The original plan's <code>max_seq_len: 2048</code> is too small
+    for DevPilot's actual tool schemas. Downloading the real
+    <code>Qwen/Qwen2.5-Coder-1.5B-Instruct</code> tokenizer and rendering
+    a real Agent-mode prompt (all 33 tools' full JSON schemas, inlined by
+    the chat template into the system message) measured at ~3,850
+    tokens — before any completion is even added. At 2048, 14 of 33 real
+    Phase-1 examples (every Plan/Agent-mode one) were silently dropped.
+    Raised to 4096, verified to cover the full real 51-example dataset
+    with headroom (longest real sequence: 3,867 tokens).</li>
+    <li>TRL's usual completion-only-masking mechanism
+    (<code>DataCollatorForCompletionOnlyLM</code>) finds the
+    prompt/completion boundary by string-matching a response template
+    against the tokenized sequence — a known source of silent
+    off-by-one bugs when a chat template's special tokens don't retokenize
+    identically in every context. Testing directly against the real
+    tokenizer found a stronger, verifiable property instead:
+    <code>apply_chat_template(prompt_messages, add_generation_prompt=True)</code>
+    is an exact string <em>prefix</em> of the full rendered conversation
+    including the assistant's turn, for both a tool-call completion and
+    a plain-text one. That prefix property gives an exact, verified
+    masking boundary instead of an assumed one.</li>
+  </ul>
+
+  <p><strong>Installed the real training stack specifically to verify
+  the script, not to run it.</strong> <code>transformers</code>,
+  <code>peft</code>, <code>trl</code>, <code>bitsandbytes</code>,
+  <code>datasets</code>, and <code>accelerate</code> were installed
+  CPU-only, and every config object the script constructs
+  (<code>SFTConfig</code>, <code>LoraConfig</code>,
+  <code>BitsAndBytesConfig</code>,
+  <code>DataCollatorForSeq2Seq</code>) was actually instantiated with
+  the script's exact real parameters — not just imported. This caught
+  two real API mismatches immediately: the installed
+  <code>trl==1.12.0</code>'s <code>SFTConfig</code> has no
+  <code>max_seq_length</code> field (renamed <code>max_length</code>),
+  and its constructor accepts <code>warmup_steps</code>, not
+  <code>warmup_ratio</code> — despite <code>warmup_ratio</code> appearing
+  in <code>dataclasses.fields(SFTConfig)</code>, which turned out to be a
+  misleading check on its own; only actually calling the constructor
+  surfaced the real, correct answer.</p>
+
+  <p><strong>Will do:</strong> verify every part of the training script
+  that can be verified without a GPU — tokenization, masking, config
+  construction, the pre-tokenized-dataset integration path — against the
+  real installed libraries; leave the GPU-only training loop correctly
+  written per each library's documented API, clearly flagged as
+  unexecuted here, not silently assumed to work.<br>
+  <strong>Won't do:</strong> claim the training loop is "tested" when
+  only its data-side inputs are; guess at a library's API shape when it's
+  actually installed and inspectable.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><code>ml/train/format_example.py</code> — converts one
+  <code>TrainingExample</code> into the exact prompt-plus-completion
+  text via the real tokenizer's chat template, tokenizes both the prompt
+  alone and the full sequence, and builds <code>labels</code> with every
+  token before the verified prompt-token boundary set to <code>-100</code>
+  (PyTorch's cross-entropy ignore-index). An oversized example is
+  dropped entirely, not truncated — truncating a tool-call completion
+  could cut off mid-JSON and teach the model to emit invalid JSON.</p>
+
+  <p><code>ml/train/train_qlora.py</code> — <code>--dry-run</code> loads
+  and tokenizes the real dataset against the real tokenizer and reports
+  sequence-length stats, touching nothing GPU-related; the real path
+  builds a 4-bit NF4 double-quantized <code>BitsAndBytesConfig</code>,
+  loads the base model, wraps it with <code>prepare_model_for_kbit_training</code>
+  and a <code>LoraConfig</code> (r=16, alpha=32, dropout=0.05, targeting
+  q/k/v/o/gate/up/down projections), and trains via
+  <code>SFTTrainer</code> — passed a pre-tokenized <code>datasets.Dataset</code>
+  directly (confirmed by reading the real installed
+  <code>trl/trainer/sft_trainer.py</code> source: <code>_prepare_dataset</code>
+  detects <code>"input_ids" in column_names</code> and skips its own
+  text-formatting entirely when true, using the existing
+  <code>labels</code> column as-is). A new
+  <code>_compute_warmup_steps()</code> derives the spec's stated 3%
+  warmup from real dataset size, since the installed <code>SFTConfig</code>
+  has no ratio-based option.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>10 new tests, all passing, all against real installed libraries —
+  nothing mocked at this layer. <code>tests/test_format_example.py</code>
+  (4 tests, real tokenizer download): decoded the unmasked label span
+  back to text and confirmed it's exactly the real tool-call JSON (or
+  refusal text) and nothing from the prompt; confirmed prior conversation
+  turns are correctly part of the masked prompt; confirmed an oversized
+  example is dropped, not truncated. Also run directly against all 51
+  real Phase-1 examples end to end: 0 dropped at the corrected
+  <code>max_seq_len=4096</code>, versus 14/33 dropped at the original
+  plan's 2048. <code>tests/test_train_qlora.py</code> (6 tests): the
+  data-loading wrapper and warmup-step math verified directly.</p>
+
+  <p>Every config object constructed for real with the script's actual
+  parameters, not just imported — this is what caught the
+  <code>max_seq_length</code>/<code>warmup_ratio</code> mismatches
+  immediately rather than leaving them to fail on a real Colab run days
+  later. Reconfirmed clean after both fixes: <code>SFTConfig</code>,
+  <code>LoraConfig</code>, <code>BitsAndBytesConfig</code>, and
+  <code>DataCollatorForSeq2Seq</code> all construct without error, and
+  the collator was exercised directly on a small fabricated batch,
+  confirming correct padding of both <code>input_ids</code> (to the
+  tokenizer's real pad token) and <code>labels</code> (to
+  <code>-100</code>). <code>--dry-run</code> run for real against the
+  actual <code>train.jsonl</code>/<code>test.jsonl</code>: 33 train + 18
+  eval examples loaded and tokenized correctly (sequence lengths: min
+  322, max 3867, mean 1604).</p>
+
+  <p><strong>What this entry does NOT claim:</strong> that
+  <code>trainer.train()</code> has been run. That call needs a real GPU
+  and CUDA-enabled <code>bitsandbytes</code>, neither available here —
+  it's marked <code>_run_train(...)  # pragma: no cover</code> directly
+  in the script, and the first real Colab/Kaggle run should be treated
+  as the actual first test of that specific part, reported honestly
+  either way, not assumed successful because everything upstream of it
+  checked out. Full suite: 103/103 passing.</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
