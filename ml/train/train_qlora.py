@@ -117,6 +117,23 @@ def _run_train(args) -> None:  # pragma: no cover -- needs a real GPU + bitsandb
     )
     from trl import SFTConfig, SFTTrainer
 
+    # Confirmed live (real Kaggle run): bf16 is an Ampere-or-newer hardware
+    # feature (compute capability >= 8.0) -- unconditionally passing
+    # bf16=True made SFTConfig's own validation reject the run outright on
+    # Kaggle's GPU with "Your setup doesn't support bf16/gpu", well before
+    # any training code ran. torch.cuda.is_bf16_supported() is the same
+    # check transformers' own validation uses internally, confirmed by
+    # constructing it directly in this CPU-only environment (returns False
+    # safely, doesn't error, even with no CUDA device at all) -- so it's
+    # used here to pick bf16 where the GPU actually supports it and fall
+    # back to fp16 (with its own loss-scaling, handled by SFTConfig/
+    # SFTTrainer automatically when fp16=True) everywhere else, rather
+    # than assuming any given free-tier GPU (Colab's vs. Kaggle's may
+    # differ) supports bf16.
+    use_bf16 = torch.cuda.is_bf16_supported()
+    compute_dtype = torch.bfloat16 if use_bf16 else torch.float16
+    print(f"bf16 supported on this GPU: {use_bf16} -- using compute dtype {compute_dtype}")
+
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -159,7 +176,7 @@ def _run_train(args) -> None:  # pragma: no cover -- needs a real GPU + bitsandb
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
         bnb_4bit_use_double_quant=True,
-        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_compute_dtype=compute_dtype,
     )
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL, quantization_config=bnb_config, device_map="auto"
@@ -213,7 +230,8 @@ def _run_train(args) -> None:  # pragma: no cover -- needs a real GPU + bitsandb
         gradient_accumulation_steps=args.grad_accum_steps,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
-        bf16=True,
+        bf16=use_bf16,
+        fp16=not use_bf16,
         logging_steps=10,
         save_strategy="epoch",
         eval_strategy="epoch" if eval_dataset is not None else "no",

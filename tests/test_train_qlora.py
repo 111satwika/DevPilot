@@ -117,6 +117,49 @@ def test_sft_config_eval_batch_size_matches_train_batch_size():
     assert training_args.per_device_eval_batch_size == training_args.per_device_train_batch_size == per_device_batch_size
 
 
+def test_sft_config_falls_back_to_fp16_when_bf16_is_unsupported():
+    """Confirmed live (real Kaggle run): _run_train used to hardcode
+    bf16=True unconditionally, and SFTConfig's own validation rejected
+    that outright on Kaggle's GPU with "Your setup doesn't support
+    bf16/gpu" -- bf16 needs Ampere-or-newer hardware (compute capability
+    >= 8.0), which not every free-tier GPU (Kaggle's T4/P100, possibly
+    unlike whatever Colab happened to assign in earlier runs) has. Fixed
+    by detecting support at runtime via torch.cuda.is_bf16_supported()
+    (verified safe to call with no CUDA device at all -- returns False,
+    doesn't error) and falling back to fp16 otherwise. This constructs
+    the exact same SFTConfig shape with the fallback values and confirms
+    it doesn't error and the two flags are always opposite, never both
+    True or both False."""
+    torch = pytest.importorskip("torch")
+    trl = pytest.importorskip("trl")
+
+    use_bf16 = torch.cuda.is_bf16_supported()  # False in this CPU-only environment
+
+    training_args = trl.SFTConfig(
+        output_dir="out",
+        num_train_epochs=1,
+        learning_rate=2e-4,
+        lr_scheduler_type="cosine",
+        warmup_steps=1,
+        per_device_train_batch_size=1,
+        per_device_eval_batch_size=1,
+        gradient_accumulation_steps=16,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        bf16=use_bf16,
+        fp16=not use_bf16,
+        use_cpu=True,
+        logging_steps=10,
+        save_strategy="epoch",
+        eval_strategy="epoch",
+        report_to=[],
+        max_length=4096,
+    )
+
+    assert training_args.bf16 != training_args.fp16
+    assert training_args.bf16 == use_bf16
+
+
 class TestComputeWarmupSteps:
     def test_is_roughly_three_percent_of_total_steps(self):
         # 100 examples, batch 4 * grad_accum 4 = effective 16 -> 7 steps/epoch (ceil),
