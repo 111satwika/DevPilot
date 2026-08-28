@@ -6973,6 +6973,73 @@ if session is None:
   meant to fix.</p>
 </div>
 
+<h2 id="entry-56">Entry 56 — A Real Bug Inside trl Itself: the Default Chunked Loss Crashes</h2>
+<div class="entry-meta">2026-08-28 · Real Kaggle GPU session, bf16-capable, both Entry 55 fixes confirmed working live · Status: <span class="status-done">fixed and verified against the real installed trl source; not yet re-confirmed end-to-end</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Both Entry 55 fixes worked</strong> — Kaggle printed
+  <code>bf16 supported on this GPU: True -- using compute dtype
+  torch.bfloat16</code>, the model downloaded and quantized cleanly, LoRA
+  attached (<code>trainable%: 1.1820</code>, correct for this setup). A
+  third, different crash then appeared, inside
+  <code>SFTTrainer.__init__</code> itself, before training could start:
+  <code>AttributeError: 'functools.partial' object has no attribute
+  '__func__'</code>, deep inside
+  <code>trl.trainer.sft_trainer._patch_chunked_ce_lm_head</code>.</p>
+
+  <p><strong>Diagnosed by reading trl's own installed source directly</strong>
+  (<code>inspect.getsource</code>), the same discipline used for every
+  other trl/transformers/peft mismatch in this project (Entry 48's
+  <code>max_length</code>/<code>warmup_steps</code> renames, Entry 53's
+  eval-batch-size default) — not by searching the error text or guessing
+  a flag to flip. That source shows exactly why: <code>SFTConfig</code>'s
+  `__post_init__` silently resolves <code>loss_type</code> to
+  <code>"chunked_nll"</code> whenever it's left unset — a memory
+  optimization that monkey-patches <code>model.forward</code> to compute
+  cross-entropy in chunks, skipping the <code>lm_head</code> matmul on
+  masked-out tokens. That patch reads
+  <code>inspect.signature(original_forward.__func__)</code>, which
+  assumes <code>model.get_base_model().forward</code> is a plain bound
+  method. For this project's exact setup — PEFT LoRA + 4-bit
+  quantization + gradient checkpointing, stacked together — it's a
+  <code>functools.partial</code> instead, and partial objects don't have
+  a <code>__func__</code>.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><code>ml/train/train_qlora.py</code>'s <code>SFTConfig(...)</code>
+  now passes <code>loss_type="nll"</code> explicitly — the plain,
+  long-established loss computation TRL has always supported,
+  mathematically equivalent to the chunked path, just without the
+  optimization (and its bug) that path adds. This isn't working around a
+  symptom; it's opting out of the specific feature whose real installed
+  implementation has the actual bug for this model configuration.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Verified the same way as every other config-construction fix in
+  this project: built the real <code>SFTConfig</code> directly with
+  <code>loss_type="nll"</code> and confirmed it accepts and stores the
+  value. New
+  <code>tests/test_train_qlora.py::test_sft_config_uses_plain_nll_loss_not_the_buggy_chunked_default</code>.
+  Full suite: 148/148 passing.</p>
+
+  <p><strong>Not yet re-verified end-to-end.</strong> This is the third
+  real, distinct fix needed just to get one Kaggle GPU session past
+  <code>SFTTrainer.__init__</code> (after the <code>mcp</code> pin and
+  the bf16/fp16 fallback, Entry 55) — each one a genuine environment- or
+  library-version-specific issue no prior Colab session had happened to
+  surface. Next step: the user retries training on Kaggle with all three
+  fixes pulled in; if training actually completes this time, that's
+  finally the real test of Entry 54's duplicate-template root-cause fix.</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
