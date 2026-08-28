@@ -7240,6 +7240,78 @@ if session is None:
   real state before deciding next steps.</p>
 </div>
 
+<h2 id="entry-59">Entry 59 — Adding the Missing Contrastive Signal for Gated Tools</h2>
+<div class="entry-meta">2026-08-28 · User's choice, given three options: fix the root cause of the mode-discipline regression · Status: <span class="status-done">dataset fix verified; retraining is the next real step</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Confirmed the exact gap, not guessed</strong> — a direct
+  query of the real training set answered the obvious follow-up question
+  to Entry 58's finding with a number, not an assumption:</p>
+
+  <pre style="white-space:pre-wrap">Agent-mode POSITIVE (successful) tool_call examples for a gated/mutating tool: 0</pre>
+
+  <p>Every one of the 9 <code>GATED_TOOLS</code> — <code>write_file</code>,
+  <code>execute_command</code>, <code>git_commit</code>,
+  <code>git_push</code>, <code>git_delete_branch</code>,
+  <code>git_create_branch</code>, <code>build_image</code>,
+  <code>run_container</code>, <code>stop_container</code> — had appeared
+  ONLY in Plan/Ask-mode refusal examples across this project's entire
+  dataset history. A model can't learn "call this when the mode allows
+  it, refuse when it doesn't" from data that only ever shows the refuse
+  half of that contrast.</p>
+
+  <p><strong>Will do:</strong> add real Agent-mode positive examples for
+  these tools, with phrasing deliberately distinct from the refusal-side
+  templates for the same tools — proactively applying Entry 54's lesson
+  (literal duplicate text between a tool_call-labeled and refusal-
+  labeled example for the same tool teaches surface-pattern matching,
+  not mode-sensitivity) instead of re-discovering it the hard way.<br>
+  <strong>Won't do:</strong> touch the three deliberately held-out tool
+  families (Entry 47's unseen-tool generalization design) — accepted
+  that <code>stop_container</code> specifically won't get this fix's
+  training-time benefit, since its only new example lands in test.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>New <code>GATED_POSITIVE_TEMPLATES</code> in
+  <code>ml/data/generate_positive_examples.py</code>, covering 8 of the
+  9 gated tools (all but the held-out <code>stop_container</code>) —
+  argument shapes verified against each tool's real signature in
+  <code>mcp_servers/*/server.py</code> directly (e.g.
+  <code>write_file(path, content)</code>,
+  <code>git_delete_branch(name, force)</code>,
+  <code>build_image(dockerfile_dir, tag)</code>), not guessed.
+  <code>generate_positive_examples()</code> now merges these in only for
+  <code>mode="agent"</code> — the only mode that actually offers these
+  tools — with the same "tool not offered" drift-catching assertion the
+  existing read-only <code>POSITIVE_TEMPLATES</code> already used.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>New
+  <code>tests/test_generate_positive_examples.py::test_gated_tools_excluded_outside_agent_mode</code>
+  confirms these tools are cleanly skipped (not crashed) when generating
+  for Plan/Ask mode. Regenerated the full dataset for real: 47 positive
+  examples across 30 tools (was 35/21), <code>train.jsonl</code> 57 → 67,
+  <code>test.jsonl</code> 29 → 31 — re-verified against the real
+  tokenizer via <code>--dry-run</code>, 0 dropped at
+  <code>max_seq_len=4096</code> (longest sequence now 3,899 tokens).
+  Full suite: 157/157 passing.</p>
+
+  <p><strong>Not yet retrained.</strong> Next step: the user retrains on
+  Kaggle with this dataset, then re-runs both the eval harness AND
+  <code>debug_predictions.py --type refusal</code> — not just the
+  aggregate rate, given Entry 58's entire lesson was that the aggregate
+  rate alone had been silently wrong for the whole project until raw
+  output was actually checked.</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
