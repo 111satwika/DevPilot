@@ -6336,6 +6336,229 @@ if session is None:
   checked out. Full suite: 103/103 passing.</p>
 </div>
 
+<h2 id="entry-49">Entry 49 — Phase 2 Closed for Real: the First Live Colab GPU Run</h2>
+<div class="entry-meta">2026-08-28 · The user ran the training script on their own Colab session; each real failure fixed in sequence as it actually happened · Status: <span class="status-done">training completed end to end on a real T4 GPU — the first real trained artifact in this project</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Three real failures, fixed one at a time as they actually
+  occurred — none pre-empted speculatively.</strong> Entry 48 shipped a
+  training script verified as far as possible without a GPU; this entry
+  is what happened the moment a real GPU actually ran it.</p>
+
+  <p><strong>(1) git clone failed.</strong> <code>fatal: could not read
+  Username for 'https://github.com'</code> — the repo is private, and
+  Colab's non-interactive shell has no way to prompt for credentials.
+  Left as the user's own choice (make the repo public / clone with a
+  personal access token / upload the folder directly) rather than
+  flipping repo visibility unilaterally.</p>
+
+  <p><strong>(2) `ModuleNotFoundError: No module named 'mcp'`.</strong>
+  The <code>ml/data/*.py</code> scripts import <code>llm.agent</code> to
+  discover DevPilot's real tool schemas — which needs DevPilot's own
+  runtime dependencies (<code>mcp</code>, <code>httpx2</code>,
+  <code>fastapi</code>, <code>pydantic</code>), not just the ML training
+  stack that had been installed. A second, separate gap: Colab wipes
+  <code>/content</code> entirely on a runtime disconnect — the dataset
+  built in an earlier session was silently gone, and
+  <code>Train examples: 0</code> reached <code>SFTTrainer.__init__</code>
+  fine, then crashed deep inside it with a bare <code>StopIteration</code> —
+  but only after the ~3GB base model had already downloaded.</p>
+
+  <p><strong>(3) A real CUDA OOM.</strong> 14.17/14.56 GB already in use
+  on the T4 before a failed 2.64 GB allocation, on the very first
+  backward pass, at the default <code>batch_size=4</code>. Qwen's
+  ~152k-token vocabulary is the likely dominant cost, not model weights
+  (tiny at 4-bit) — the output logits tensor scales with
+  <code>batch_size × seq_len × vocab_size</code>, and real examples run
+  up to ~3,867 tokens (Entry 48).</p>
+
+  <p><strong>Will do:</strong> add <code>pip install -r requirements.txt</code>
+  alongside the ML stack install; make <code>_run_train</code> fail in
+  under a second on an empty dataset instead of after the expensive
+  download; drop <code>per_device_batch_size</code>/<code>gradient_accumulation_steps</code>
+  from 4/4 to 1/16 (same effective batch size, 4x less peak memory) and
+  make gradient checkpointing explicit rather than relying on a library
+  default.<br>
+  <strong>Won't do:</strong> change the repo's visibility without being
+  asked; guess at further memory optimizations pre-emptively once the
+  OOM was actually fixed.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>New early-exit check in <code>ml/train/train_qlora.py</code>'s
+  <code>_run_train()</code>, right after the dataset loads and before any
+  model/quantization code runs: raises a clear <code>SystemExit</code>
+  naming the likely cause (dataset never regenerated in this session,
+  Colab having wiped an earlier one) if <code>train_dataset</code> is
+  empty. <code>--per-device-batch-size</code>/<code>--grad-accum-steps</code>
+  CLI defaults changed to 1/16.
+  <code>prepare_model_for_kbit_training(model,
+  use_gradient_checkpointing=True, gradient_checkpointing_kwargs=
+  {"use_reentrant": False})</code> made explicit rather than relying on
+  the function's own default; the same two settings added directly to
+  <code>SFTConfig</code> too.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Every fix verified against the real installed library before being
+  sent back to the user for another Colab run — never just "should work"
+  guessed twice in a row. The empty-dataset check: confirmed live in this
+  environment (no GPU needed, since the whole point is failing before any
+  GPU code runs) that it fires in under a second with the intended
+  message and no model download attempted; a new
+  <code>tests/test_train_qlora.py::test_run_train_fails_fast_on_empty_dataset_before_any_gpu_code</code>
+  covers it permanently. The gradient-checkpointing/batch-size change:
+  <code>SFTConfig</code> constructed for real with the new parameters
+  (<code>gradient_checkpointing</code>/<code>gradient_checkpointing_kwargs</code>
+  confirmed to exist and accept these values against the real
+  <code>trl==1.12.0</code>).</p>
+
+  <p><strong>Then the real GPU result, reported by the user:</strong>
+  training completed end to end. 9 steps (3 epochs ×
+  ⌈33÷16⌉=3 steps/epoch, matching the math exactly),
+  <code>eval_loss</code> 2.423 → 1.576 → 1.369 and
+  <code>eval_mean_token_accuracy</code> 0.587 → 0.696 → 0.736, both
+  monotonic across all 3 epochs — real evidence the LoRA adapter learned
+  something, not noise. Read honestly, not oversold: 33 training examples
+  is tiny (mostly Phase 1's synthetic/adversarial data, since real usage
+  traces don't exist yet), so this proves the mechanism (data → QLoRA → a
+  real saved adapter) works end to end — it does not by itself prove the
+  fine-tuned model beats the base model at anything. Adapter saved to
+  <code>ml/train/out/qlora-adapter/</code>; flagged as urgent to back up
+  immediately (zip+download or a push to the Hugging Face Hub), since
+  Colab had already demonstrably wiped <code>/content</code> once in this
+  same session.</p>
+</div>
+
+<h2 id="entry-50">Entry 50 — Phase 3: the Eval Harness, Plus a Real Base-Model Baseline</h2>
+<div class="entry-meta">2026-08-28 · The whole fine-tune project's founding hypothesis, turned from a claim into a measured number · Status: <span class="status-done">harness built and tested; real baseline measured against the live base model</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>This phase is the actual payoff of the whole project.</strong>
+  Everything through Entry 49 built infrastructure and produced one
+  trained adapter — Phase 3 is where the founding claim ("a model
+  fine-tuned on DevPilot's own tools should beat a general one at
+  respecting them") either holds up against real numbers or doesn't. The
+  harness was designed to make that comparison fair: a model-agnostic
+  <code>Predictor</code> interface (<code>(example) → tool_calls</code>)
+  so the same loop, timing, and metrics apply identically whether a
+  model is reached over HTTP (Ollama) or loaded directly
+  (transformers + PEFT adapter) — extending to a third model (the
+  teacher) later needs one more predictor function, not a second
+  harness.</p>
+
+  <p><strong>make_ollama_predictor calls Ollama directly, not through
+  llm/agent.py's own _ollama_chat().</strong> That function still bridges
+  through a WSL "Ubuntu" distro that doesn't exist in this environment —
+  a real, separately-known bug in the live app, found earlier in this
+  project's history and not yet fixed (the conversation moved to this
+  fine-tune project instead of fixing it). The eval harness has no reason
+  to inherit a bug it doesn't need just to reach the same real, live
+  Ollama instance a simpler direct call already reaches fine.</p>
+
+  <p><strong>Smoke-tested with 2 examples before committing to the full
+  18-example run</strong> — CPU-only inference on this model has
+  historically taken minutes per call on this hardware (Entry 34), so
+  burning that time only to discover a bug at example 15 would be a real
+  waste. This caught the harness's own default 120s HTTP timeout being
+  too short on the very first smoke-test call.</p>
+
+  <p><strong>Will do:</strong> pure, independently-testable metric
+  functions (no model or network involved) separate from the
+  model-calling/timing loop; verify the harness against a real model on a
+  small sample before the full run; raise the timeout to match
+  <code>llm/agent.py</code>'s own already-empirically-tuned 600s for this
+  exact model on this exact hardware, rather than guessing a new
+  number.<br>
+  <strong>Won't do:</strong> average a rate metric over examples it can't
+  actually apply to (see the real bug this caught, below).</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><code>ml/eval/metrics.py</code>: <code>exact_tool_match</code>,
+  <code>is_schema_valid</code>, <code>argument_f1</code>, and
+  <code>is_mode_violation</code> as pure functions;
+  <code>task_completed</code> as the umbrella pass/fail per example.
+  <code>argument_f1</code> returns <code>None</code> (not <code>0.0</code>)
+  when there's nothing comparable to score — a pattern already
+  established here before this entry, but not yet applied consistently
+  to the other two rate metrics (see Outcome below).</p>
+
+  <p><code>ml/eval/harness.py</code>: <code>evaluate()</code> loops over
+  the held-out set, times each predictor call, and aggregates into an
+  <code>EvalReport</code> — exact-match rate, schema-valid rate, mean
+  argument F1, mode-violation rate, task-completion rate, and p50/p95
+  latency.</p>
+
+  <p><code>ml/eval/predictors.py</code>: <code>make_ollama_predictor</code> —
+  a direct HTTP call to <code>127.0.0.1:11434/api/chat</code>, real and
+  runnable now. <code>make_hf_adapter_predictor</code> — loads the 4-bit
+  base model plus the trained LoRA adapter and parses the same
+  <code>&lt;tool_call&gt;{...}&lt;/tool_call&gt;</code> format verified
+  live in Phase 2 (Entry 48), needs a real GPU, written but not
+  executable here.</p>
+
+  <p><code>ml/eval/run_eval.py</code> — CLI tying a chosen predictor to
+  the held-out test set, printing a summary line and writing the full
+  per-example report as JSON.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p><strong>A real design bug, caught by a test, not just written and
+  assumed correct.</strong> A test asserted that a perfect predictor
+  should score 100% <code>exact_tool_match_rate</code> across a small
+  mixed dataset — it scored 67% instead. Root cause: <code>exact_tool_match</code>
+  is structurally impossible to be true for a refusal-expected example
+  (there's no tool to match against), and the harness was averaging it
+  over every example regardless of type — diluting the rate in a
+  genuinely misleading way, not just an imprecise one. The same real
+  problem existed for <code>mode_violation_rate</code> in the other
+  direction. Fixed by scoring each rate only over its own relevant
+  subset, mirroring the pattern <code>argument_f1</code> already used.
+  Both fixed, then every test — 33 across the three new test files —
+  passed.</p>
+
+  <p><strong>Then the first real measured result in the whole fine-tune
+  project.</strong> Smoke-tested with <code>--limit 2</code> first
+  (caught the 120s-timeout issue, raised to 600s), then ran the full
+  harness for real against the live <code>qwen2.5:7b-instruct</code> on
+  the real 18-example held-out set:</p>
+
+  <p style="font-family:'SF Mono',Consolas,Menlo,monospace;font-size:0.85rem;background:var(--accent-soft);padding:0.6rem 0.8rem;border-radius:6px;">
+  exact_match=50.0% · schema_valid=100.0% · arg_f1=1.000<br>
+  mode_violation=37.5% · task_completion=61.1%<br>
+  p50=20.60s · p95=150.43s (n=18)
+  </p>
+
+  <p><code>mode_violation_rate=37.5%</code> is the number this whole
+  project has been building toward measuring: the general-purpose base
+  model calls a tool anyway on over a third of the requests where the
+  correct behavior was to refuse (a Plan/Ask-mode request needing a tool
+  outside what that mode allows) — turning the project's founding claim
+  from plausible into measured. <code>schema_valid_rate=100%</code>
+  means every tool call it did make was well-formed, no hallucinated
+  tool names or missing required arguments.
+  <code>exact_tool_match_rate=50%</code> is over a small n (2
+  tool-call-type examples in this held-out set) and shouldn't be
+  over-read yet. Latency (p50 20.6s, p95 150.4s, driven by the full
+  33-tool Agent-mode schema on the slowest calls) is consistent with this
+  project's own prior CPU-only-inference findings (Entry 34). Next: the
+  same harness against the fine-tuned adapter, on a real GPU, for the
+  actual base-vs-fine-tuned comparison.</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
