@@ -7040,6 +7040,115 @@ if session is None:
   finally the real test of Entry 54's duplicate-template root-cause fix.</p>
 </div>
 
+<h2 id="entry-57">Entry 57 — Premature-EOS Collapse: Five Hypotheses Ruled Out, One Real Fix</h2>
+<div class="entry-meta">2026-08-28 · Real Kaggle training run completed cleanly; raw-output investigation found a deeper problem · Status: <span class="status-done">learning-rate/warmup fix applied and verified; not yet re-confirmed end-to-end</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Training finally completed cleanly</strong> — all three of
+  Entries 55/56's fixes held, no OOM, no crash. The per-epoch curves
+  looked genuinely healthy: <code>eval_loss</code> 1.94 → 1.336 → 1.221,
+  <code>eval_mean_token_accuracy</code> 0.70 → 0.77 → 0.79, both
+  monotonic and better than the original successful run's numbers. But
+  the eval harness's aggregate result was identical to before the
+  duplicate-template fix (<code>exact_tool_match=0.0%</code>,
+  <code>task_completion=48.3%</code>) — suspicious enough to check raw
+  output again rather than accept it.</p>
+
+  <p><strong><code>debug_predictions.py</code> showed something new</strong>:
+  not the Plan-mode-shaped refusal text seen before Entry 54's fix, but
+  a single immediate <code>&lt;\|im_end\|&gt;</code> token — zero real
+  content — on every tool_call example checked. Extending the tool to
+  print raw token IDs (not just the special-token-stripped text a real
+  predictor would see) confirmed it precisely: <code>new tokens
+  generated: 1  ids: [151645]</code>.</p>
+
+  <p><strong>Checking whether this was universal or type-specific</strong>
+  mattered for a real reason: <code>ml/eval/metrics.py</code>'s
+  <code>task_completed</code> and <code>is_mode_violation</code> both
+  only check whether a tool was called, never whether real refusal TEXT
+  was generated — a model producing nothing at all on a refusal-expected
+  example scores identically to one producing a genuine explanation. A
+  new <code>--type refusal</code> mode plus a full-set tally answered
+  this with real numbers: <strong>14/15 tool_call</strong> and
+  <strong>3/14 refusal</strong> held-out examples collapsed to immediate
+  EOS. Not a clean split by type, but a large, real, quantified
+  asymmetry — not something to guess past.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><strong>Five real hypotheses, each checked and ruled out by direct
+  verification</strong> — not by trial-and-error, before concluding this
+  was a training-dynamics problem rather than one more fixable bug:</p>
+
+  <ol>
+    <li><strong>Stale pre-fix dataset</strong> — ruled out; the user's
+    own printed `train.jsonl` refusal examples showed the exact
+    de-duplicated phrasing from Entry 54's fix.</li>
+    <li><strong>Label/prompt token misalignment</strong> — ruled out;
+    verified locally, no GPU needed, that
+    <code>full_ids[:len(prompt_ids)] == prompt_ids</code> held exactly
+    for 5 real examples of each completion type (a subtler check than
+    Concept #41's original STRING-prefix verification — this is the
+    TOKEN-level prefix property, which BPE tokenizers don't always
+    guarantee even when the string property holds).</li>
+    <li><strong>The <code>loss_type="nll"</code> change (Entry 56)</strong>
+    — ruled out; reading trl's own <code>compute_loss</code> source
+    directly found `"nll"` is a literal no-op (`if args.loss_type ==
+    "nll": pass  # use the default loss`) — identical to whatever the
+    original successful run's older trl version did implicitly.</li>
+    <li><strong>Precision</strong> — ruled out; `bf16=True` in both this
+    run and the original successful one, confirmed via the printed
+    `bf16 supported on this GPU: True` line.</li>
+    <li><strong>eos/pad token collision</strong> — ruled out;
+    `generation_config.eos_token_id=[151645, 151643]` are two distinct,
+    correctly-configured tokens (Qwen's own convention), and the model
+    predicts `151645` — the CORRECT token type, just at the wrong
+    position (first, instead of after real content).</li>
+  </ol>
+
+  <p><strong>What was left</strong>: a genuine, documented training-
+  dynamics cause — `learning_rate=2e-4` with effectively 1 warmup step
+  (3% of only 12 total steps for this project's real 57-example
+  schedule, floored) is aggressive for a dataset this small and skewed
+  (long masked prompts, short completions). Given three options, the
+  user chose to lower the learning rate and raise warmup rather than
+  grow the dataset or stop and document the finding as-is.</p>
+
+  <p><strong>The fix itself needed its own verification</strong>, not
+  just a round-number guess: `--learning-rate` (new CLI arg, default
+  `1e-4`, was hardcoded `2e-4`) and `--warmup-ratio` (new CLI arg,
+  default raised from a hardcoded `0.03`). Checked by direct arithmetic
+  against this project's REAL 12-total-step schedule before committing
+  to a value: 10% would have rounded right back down to the same 1-step
+  warmup as the original 3% (`round(12*0.1)=1` vs `round(12*0.03)=0`,
+  both floor to 1) — a "safe-sounding" fix that would have shipped as a
+  no-op. `20%` (`round(12*0.2)=2`) is the smallest round ratio that
+  actually changes anything for a schedule this short.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Every diagnostic tool change verified via syntax check + full suite
+  before pushing. The learning-rate/warmup fix verified against this
+  project's own real dataset shape, not a generic example: new
+  <code>tests/test_train_qlora.py::test_default_warmup_ratio_is_twenty_percent_not_three</code>
+  asserts the exact real numbers (12 total steps → 2 warmup steps at the
+  new default), so a regression back to a too-low default fails against
+  real numbers, not an arbitrary case. Full suite: 149/149 passing.</p>
+
+  <p><strong>Not yet re-verified end-to-end.</strong> Next step: the
+  user retrains on Kaggle with the new defaults
+  (`--learning-rate 1e-4 --warmup-ratio 0.2`), then checks raw
+  generation directly via `debug_predictions.py` — not just aggregate
+  metrics, given this entry's entire finding is that aggregate metrics
+  alone weren't enough to catch this failure mode.</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
