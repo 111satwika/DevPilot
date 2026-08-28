@@ -6559,6 +6559,77 @@ if session is None:
   actual base-vs-fine-tuned comparison.</p>
 </div>
 
+<h2 id="entry-51">Entry 51 — The Real Base-vs-Fine-Tuned Comparison</h2>
+<div class="entry-meta">2026-08-28 · The user ran the eval harness against the trained adapter on the same Colab session · Status: <span class="status-done">measured — a real win, a real regression, and one invalid comparison correctly flagged as such</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>The first genuine two-way comparison in this project.</strong>
+  Entry 50 measured the base model alone; this is
+  <code>ml/eval/run_eval.py --model hf-adapter</code> run against the
+  trained adapter, on the identical 18-example held-out set, on the same
+  Colab session that trained it. No new code — this entry is entirely
+  about honestly reading and reporting a real result.</p>
+
+  <p><strong>Report both directions, not just the favorable one.</strong>
+  The original fine-tune plan itself calls this out explicitly: a
+  candidate who reports a fine-tune winning on one axis and losing on
+  another is more credible than one who reports uniform wins. This
+  result gave exactly that shape, and it's reported that way rather than
+  leading with only the number that flatters the project.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>No code changed. The comparison itself:</p>
+
+  <p style="font-family:'SF Mono',Consolas,Menlo,monospace;font-size:0.85rem;background:var(--accent-soft);padding:0.6rem 0.8rem;border-radius:6px;">
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;base (7.6B)&nbsp;&nbsp;→&nbsp;&nbsp;fine-tuned (1.5B)<br>
+  mode_violation_rate&nbsp;&nbsp;&nbsp;&nbsp;37.5%&nbsp;&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp;&nbsp;<strong>0.0%</strong><br>
+  task_completion_rate&nbsp;&nbsp;&nbsp;61.1%&nbsp;&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp;&nbsp;<strong>88.9%</strong><br>
+  exact_tool_match_rate&nbsp;&nbsp;50.0%&nbsp;&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp;&nbsp;<strong>0.0%</strong><br>
+  mean_argument_f1&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;1.000&nbsp;&nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp;&nbsp;n/a<br>
+  p50 / p95 latency&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;20.6s/150.4s&nbsp;&nbsp;→&nbsp;&nbsp;11.5s/32.5s (not a valid comparison — see below)
+  </p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p><strong>The real win.</strong> <code>mode_violation_rate</code> hit
+  exactly 0% — the fine-tuned model correctly refused on all 16
+  refusal-expected examples in the held-out set, down from the base
+  model's 37.5%. This is the specific thing this project set out to fix,
+  genuinely achieved, not a rounding difference.</p>
+
+  <p><strong>The real regression, reported plainly rather than
+  buried.</strong> <code>exact_tool_match_rate</code> dropped to 0% — the
+  fine-tuned model got both tool-call-expected examples wrong (both
+  <code>list_directory</code> calls), versus 1 of 2 correct for the base
+  model. <code>mean_argument_f1</code> has nothing to compute as a
+  direct consequence (no matching tool call to score arguments against).
+  Working hypothesis, stated as a hypothesis and not yet confirmed: the
+  33-example training set is heavily imbalanced (~27 refusal examples
+  vs. ~6 tool-call examples, all <code>list_directory</code>), which
+  plausibly taught the model "refuse when in doubt" at some real cost to
+  tool-calling proficiency — the same underlying effect explaining both
+  numbers, not two unrelated ones. The natural next step is rebalancing
+  the training data toward more tool-call examples and retraining to
+  test that hypothesis directly.</p>
+
+  <p><strong>One number explicitly flagged as NOT valid, before it could
+  be misused.</strong> The latency figures (p50 11.5s fine-tuned vs.
+  20.6s base) look like a real speed win but are confounded by
+  completely different hardware — the base model ran on this machine's
+  CPU via Ollama, the fine-tuned model ran on a Colab T4 GPU. Caught and
+  named explicitly as unusable for that comparison, rather than reported
+  as a finding or, worse, ending up in a resume bullet as "the fine-tune
+  is faster." The real, fair latency comparison needs Phase 4 (both
+  models quantized and served identically) first.</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
