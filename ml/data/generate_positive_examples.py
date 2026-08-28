@@ -27,6 +27,25 @@ completely different file, since nothing forced the two draws to agree.
 Fixed by picking one set of slot values ONCE per example and building
 both the text and the arguments from that same dict, so they can't
 diverge by construction.
+
+Entry 58's finding: with only READ-ONLY tools covered here, the dataset
+had ZERO Agent-mode positive examples for any GATED/mutating tool
+(write_file, execute_command, git_commit, git_push, git_delete_branch,
+build_image, run_container, stop_container, git_create_branch) --
+every training example involving those tools was a Plan/Ask-mode
+REFUSAL (generate_adversarial.py's MUTATING_REQUEST_TEMPLATES /
+PLAN_EXCLUDED_ONLY_TEMPLATES). A real Kaggle eval confirmed the
+consequence directly: the model called a real, correctly-matching gated
+tool on 12/12 Plan-mode refusal-expected test examples, having never
+once seen that these tools are ALSO valid to call, in Agent mode.
+GATED_POSITIVE_TEMPLATES below adds that missing contrastive signal --
+deliberately worded DIFFERENTLY from the refusal-side phrasing for the
+same tools (same lesson as Entry 54: literal duplicate text between a
+tool_call-labeled and a refusal-labeled example, for the same tool,
+teaches surface-pattern matching instead of mode-sensitivity), so the
+model finally has both halves of the contrast: this kind of request
+gets refused in Plan/Ask mode, but actually gets carried out in Agent
+mode.
 """
 
 import argparse
@@ -50,6 +69,16 @@ SLOTS = {
     "sha": ["abc1234", "deadbeef", "0f1e2d3"],
     "web_query": ["FastAPI dependency injection", "Python asyncio best practices", "SQLite read-only connection"],
     "url": ["https://docs.python.org/3/library/asyncio.html", "https://fastapi.tiangolo.com/tutorial/"],
+    # Gated/mutating-tool slots (Entry 58) -- deliberately different
+    # VALUES from generate_adversarial.py's SLOT_VALUES too, on top of
+    # the already-different request phrasing, so nothing here can
+    # coincidentally reproduce a literal duplicate string.
+    "package": ["typer", "httpx", "pydantic", "rich", "click"],
+    "commit_message": ["tidy imports", "bump version", "improve logging", "small refactor"],
+    "remote": ["origin"],
+    "branch_name": ["hotfix/timeout", "chore/deps", "spike-caching"],
+    "tag": ["api:v3", "worker:staging"],
+    "image": ["redis", "postgres:16"],
 }
 
 OWNER_REPOS = [
@@ -155,6 +184,51 @@ POSITIVE_TEMPLATES: dict[str, list[tuple[str, "callable"]]] = {
 }
 
 
+# Agent-mode positive examples for GATED/mutating tools (Entry 58) --
+# argument shapes taken directly from each tool's real signature
+# (mcp_servers/*/server.py: write_file(path, content),
+# execute_command(command, args, timeout_seconds), git_commit(message),
+# git_push(remote, branch), git_delete_branch(name, force),
+# git_create_branch(name), build_image(dockerfile_dir, tag),
+# run_container(image, name), stop_container(container)), same as
+# POSITIVE_TEMPLATES above. Phrasing deliberately different from
+# generate_adversarial.py's MUTATING_REQUEST_TEMPLATES /
+# PLAN_EXCLUDED_ONLY_TEMPLATES for these same tools -- see this module's
+# docstring for why that distinction matters here.
+GATED_POSITIVE_TEMPLATES: dict[str, list[tuple[str, "callable"]]] = {
+    "write_file": [
+        ("go ahead and create {filename} with a short project description", lambda s: {"path": s["filename"], "content": "A short description of this project."}),
+        ("put the text 'hello world' into {filename}", lambda s: {"path": s["filename"], "content": "hello world"}),
+    ],
+    "execute_command": [
+        ("install {package} via npm", lambda s: {"command": "npm", "args": ["install", s["package"]]}),
+        ("install {package} using pip", lambda s: {"command": "pip", "args": ["install", s["package"]]}),
+    ],
+    "git_commit": [
+        ("commit what's staged with the message '{commit_message}'", lambda s: {"message": s["commit_message"]}),
+        ("make a commit with message: {commit_message}", lambda s: {"message": s["commit_message"]}),
+    ],
+    "git_push": [
+        ("push the local commits up to {remote}", lambda s: {"remote": s["remote"]}),
+    ],
+    "git_delete_branch": [
+        ("get rid of the {branch_name} branch", lambda s: {"name": s["branch_name"], "force": False}),
+    ],
+    "git_create_branch": [
+        ("set up a new branch called {branch_name}", lambda s: {"name": s["branch_name"]}),
+    ],
+    "build_image": [
+        ("build a docker image from this directory and tag it {tag}", lambda s: {"dockerfile_dir": ".", "tag": s["tag"]}),
+    ],
+    "run_container": [
+        ("spin up a container called {container} from the {image} image", lambda s: {"image": s["image"], "name": s["container"]}),
+    ],
+    "stop_container": [
+        ("halt the {container} container", lambda s: {"container": s["container"]}),
+    ],
+}
+
+
 async def generate_positive_examples(
     mode: str = "agent", system_prompt: str = SYSTEM_PROMPT
 ) -> list[TrainingExample]:
@@ -166,8 +240,21 @@ async def generate_positive_examples(
     missing = set(POSITIVE_TEMPLATES) - offered_names
     assert not missing, f"POSITIVE_TEMPLATES has entries for tools not offered in mode={mode!r}: {missing}"
 
+    templates = dict(POSITIVE_TEMPLATES)
+    if mode == "agent":
+        # GATED_POSITIVE_TEMPLATES only makes sense in Agent mode -- the
+        # only mode that actually offers these tools (Plan/Ask exclude
+        # them by design, PLAN_MODE_ALLOWED_TOOLS). Same drift-catching
+        # assertion as above for POSITIVE_TEMPLATES, scoped to when it
+        # can actually hold.
+        missing_gated = set(GATED_POSITIVE_TEMPLATES) - offered_names
+        assert not missing_gated, (
+            f"GATED_POSITIVE_TEMPLATES has entries for tools not offered in mode={mode!r}: {missing_gated}"
+        )
+        templates.update(GATED_POSITIVE_TEMPLATES)
+
     examples = []
-    for tool_name, phrasings in POSITIVE_TEMPLATES.items():
+    for tool_name, phrasings in templates.items():
         for phrasing, args_builder in phrasings:
             slots = _draw_slots(rng)
             request = phrasing.format(**slots)

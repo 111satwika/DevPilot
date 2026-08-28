@@ -16,7 +16,11 @@ import re
 
 import pytest
 
-from ml.data.generate_positive_examples import POSITIVE_TEMPLATES, generate_positive_examples
+from ml.data.generate_positive_examples import (
+    GATED_POSITIVE_TEMPLATES,
+    POSITIVE_TEMPLATES,
+    generate_positive_examples,
+)
 
 # Slot names that plausibly appear in both the request text and the
 # argument dict, per tool -- used to check text/argument agreement
@@ -30,6 +34,10 @@ _TEXT_ARG_KEYS = {
     "get_commit": "sha",
     "search_web": "query",
     "fetch_page": "url",
+    # Gated/mutating tools (Entry 58)
+    "write_file": "path", "execute_command": "command", "git_commit": "message",
+    "git_push": "remote", "git_delete_branch": "name", "git_create_branch": "name",
+    "build_image": "tag", "run_container": "name", "stop_container": "container",
 }
 
 
@@ -44,7 +52,18 @@ async def test_generates_examples_across_many_tools_not_just_one():
 async def test_every_template_tool_actually_produces_examples():
     examples = await generate_positive_examples()
     produced = {e.tool_family_holdout for e in examples}
-    assert produced == set(POSITIVE_TEMPLATES)
+    assert produced == set(POSITIVE_TEMPLATES) | set(GATED_POSITIVE_TEMPLATES)
+
+
+@pytest.mark.asyncio
+async def test_gated_tools_excluded_outside_agent_mode():
+    """GATED_POSITIVE_TEMPLATES tools (write_file, git_commit, ...) are
+    never offered in Plan/Ask mode -- generating in a non-agent mode
+    should simply skip them, not crash or produce examples the model
+    would never actually see with that mode's real tool list."""
+    examples = await generate_positive_examples(mode="plan")
+    produced = {e.tool_family_holdout for e in examples}
+    assert not (produced & set(GATED_POSITIVE_TEMPLATES))
 
 
 @pytest.mark.asyncio
