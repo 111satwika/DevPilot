@@ -6894,6 +6894,85 @@ if session is None:
   Entry 52 tried.</p>
 </div>
 
+<h2 id="entry-55">Entry 55 — Switching to Kaggle Surfaces Two More Real Environment Bugs</h2>
+<div class="entry-meta">2026-08-28 · Colab's free-tier GPU quota ran out mid-project; moved to Kaggle for GPU access · Status: <span class="status-done">both fixed and verified against real installs; not yet re-confirmed end-to-end on Kaggle's GPU</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Colab's GPU quota ran out — an account-level limit, nothing
+  fixable in code.</strong> Moving to Kaggle for GPU access meant running
+  the full pipeline from a genuinely fresh clone for the first time in
+  this project — and a fresh environment surfaced two real bugs that
+  every prior Colab session had, by chance, never hit.</p>
+
+  <p><strong>Bug 1 — <code>ImportError: cannot import name 'Client' from
+  'mcp'</code></strong>, on every <code>ml/data/*.py</code> script (they
+  all import <code>llm.agent</code> for the real tool schemas).
+  <code>requirements.txt</code> had no version floor on <code>mcp</code>
+  — just the bare package name. Kaggle's base image already had a
+  different/older <code>mcp</code> install (plausibly pulled in by some
+  other pre-installed package), and pip's "already satisfied" logic left
+  it in place instead of resolving to the version the code actually
+  needs.</p>
+
+  <p><strong>Bug 2, after fixing Bug 1 —
+  <code>ValueError: Your setup doesn't support bf16/gpu</code></strong>,
+  raised by <code>SFTConfig</code>'s own validation before any training
+  code ran. <code>train_qlora.py</code> hardcoded <code>bf16=True</code>
+  from the start of this ML sub-project — it happened to work on
+  whatever GPU Colab had been assigning across every real prior run
+  (Entries 49a, 53, 54), but bf16 is an Ampere-or-newer hardware feature
+  (compute capability ≥ 8.0), and Kaggle's assigned GPU doesn't have it.
+  An assumption that happened to hold on one provider, never actually
+  hardware-checked, is exactly the kind of thing this project's whole
+  methodology (verify against the real thing, don't assume) exists to
+  catch — it just took switching providers to expose it.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><strong>Fix 1:</strong> <code>requirements.txt</code>'s <code>mcp</code>
+  line changed to <code>mcp&gt;=2.0.0</code> — the exact version
+  confirmed installed and working (<code>Client</code> import verified
+  directly) in this project's own dev environment. On Kaggle, required a
+  <code>pip install --upgrade --force-reinstall "mcp&gt;=2.0.0"</code>
+  rather than a plain re-run of <code>requirements.txt</code>, since the
+  conflicting version was already considered "satisfied."</p>
+
+  <p><strong>Fix 2:</strong> <code>train_qlora.py</code>'s <code>_run_train()</code>
+  now computes <code>use_bf16 = torch.cuda.is_bf16_supported()</code> —
+  the same check <code>transformers</code>' own validation uses
+  internally, confirmed directly in this CPU-only dev environment to be
+  safe to call with no CUDA device present at all (returns
+  <code>False</code>, doesn't error). Both the <code>BitsAndBytesConfig</code>
+  compute dtype and <code>SFTConfig</code>'s <code>bf16</code>/<code>fp16</code>
+  flags now follow that detected value instead of a hardcoded assumption,
+  so the same script now adapts to whichever GPU generation it actually
+  lands on — Colab's, Kaggle's, or anything else later.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Both fixes verified against real installs, same discipline as every
+  prior fix in this file: the <code>mcp</code> pin against this dev
+  environment's own working <code>mcp==2.0.0</code>; the bf16/fp16
+  fallback by constructing the real <code>SFTConfig</code> directly with
+  <code>fp16=True</code>/<code>bf16=False</code> and confirming it
+  constructs cleanly (mirrors Entry 53's verification pattern exactly).
+  New
+  <code>tests/test_train_qlora.py::test_sft_config_falls_back_to_fp16_when_bf16_is_unsupported</code>.
+  Full suite: 147/147 passing.</p>
+
+  <p><strong>Not yet re-verified end-to-end on Kaggle's real GPU.</strong>
+  Next step: the user retries training there with both fixes pulled in —
+  if it completes, that's finally the real test of Entry 54's actual
+  root-cause fix (the duplicate-template bug), on the dataset it was
+  meant to fix.</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
