@@ -7312,6 +7312,87 @@ if session is None:
   output was actually checked.</p>
 </div>
 
+<h2 id="entry-60">Entry 60 — Investigation Concluded: a Real Capability-vs-Safety Tradeoff</h2>
+<div class="entry-meta">2026-08-28 · User's deliberate choice to stop and report both real results, rather than keep iterating · Status: <span class="status-done">final — two independently verified adapters, a genuine tradeoff, honestly documented</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>The gated-tool fix worked completely, on its own terms</strong>
+  — `mode_violation_rate` 85.7% → 0.0%, and this time verified through
+  raw output, not just trusted from the aggregate rate: both `mode=plan`
+  refusal examples in the post-fix test set generated genuine refusal
+  text (not empty, not a hallucinated tool call) with zero tool calls.
+  Entry 59's specific hypothesis — that the model had never seen a
+  positive example proving gated tools are valid in Agent mode — held
+  up.</p>
+
+  <p><strong>But the same retrain cost something else</strong>:
+  `exact_tool_match_rate` fell from 80.0% to 18.5%. Checked directly via
+  `debug_predictions.py`, not assumed: several failures shared an
+  identical filler phrase — <em>"I'm going to explore the project
+  myself, but I'll let you know if I find anything relevant"</em> —
+  repeated verbatim across five completely unrelated requests. The
+  model had reverted toward its base pretrained conversational style
+  (narrate first, wrap JSON in markdown fences) instead of the terse
+  `<tool_call>`-only format it had more firmly learned before. Most
+  likely mechanism: spreading the same 3-epoch training budget across a
+  30%-larger, more diverse tool set (67 examples/30 tools, up from
+  57/21) gave each individual tool less repetition to reinforce that
+  strict format.</p>
+
+  <p><strong>Given a real further experiment was available</strong>
+  (more epochs, keeping everything else fixed) — a genuine, well-
+  reasoned next hypothesis, same rigor as every fix before it — the
+  user chose instead to stop deliberately and report the complete,
+  honest picture rather than spend more real Kaggle GPU time chasing a
+  single clean number.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>No code changed in this entry — this is a decision, reported as-is,
+  closing out the real training-and-eval loop this ML sub-project set
+  out to build (Phases 1–3 of the original plan). Phase 4 (quantize the
+  adapter, serve through Ollama, get a genuinely fair latency comparison
+  — the earlier CPU-vs-GPU comparison was explicitly flagged as invalid,
+  Concept #45) and Phase 5 (MLOps: tracking, CI eval gate, deployment)
+  remain optional future work, not started.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Two real, independently verified adapters now exist in this
+  project's history, neither cherry-picked over the other — a genuine
+  point on a capability-vs-safety tradeoff curve, not a single number:</p>
+
+  <table style="width:100%; border-collapse:collapse; margin:1em 0;">
+    <tr style="border-bottom:1px solid var(--border, #444);">
+      <th style="text-align:left; padding:6px 10px;">Metric</th>
+      <th style="text-align:left; padding:6px 10px;">Entry 58 adapter</th>
+      <th style="text-align:left; padding:6px 10px;">Entry 59 adapter</th>
+    </tr>
+    <tr><td style="padding:6px 10px;">exact_tool_match</td><td style="padding:6px 10px;">80.0%</td><td style="padding:6px 10px;">18.5%</td></tr>
+    <tr><td style="padding:6px 10px;">mean_argument_f1</td><td style="padding:6px 10px;">0.714</td><td style="padding:6px 10px;">0.733</td></tr>
+    <tr><td style="padding:6px 10px;">schema_valid</td><td style="padding:6px 10px;">69.0%</td><td style="padding:6px 10px;">93.5%</td></tr>
+    <tr><td style="padding:6px 10px;">mode_violation</td><td style="padding:6px 10px;">85.7%</td><td style="padding:6px 10px;">0.0%</td></tr>
+    <tr><td style="padding:6px 10px;">task_completion</td><td style="padding:6px 10px;">48.3%</td><td style="padding:6px 10px;">29.0%</td></tr>
+    <tr><td style="padding:6px 10px;">n (test examples)</td><td style="padding:6px 10px;">29</td><td style="padding:6px 10px;">31</td></tr>
+  </table>
+
+  <p>Both results are fully diagnosed, not just measured: the Entry 58
+  adapter's mode-violation problem traces to zero Agent-mode positive
+  examples for any gated tool (Concept #55); the Entry 59 adapter's
+  tool-calling regression traces to reduced per-tool training repetition
+  after adding 30% more tool diversity to the same short schedule
+  (Concept #56). Which configuration is "better" depends entirely on
+  what a real deployment needs more — and reporting both, with the real
+  mechanism behind the tradeoff, is a more honest and more complete
+  result than picking one and hiding the other.</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
