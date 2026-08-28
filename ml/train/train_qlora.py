@@ -198,6 +198,18 @@ def _run_train(args) -> None:  # pragma: no cover -- needs a real GPU + bitsandb
         lr_scheduler_type="cosine",
         warmup_steps=warmup_steps,
         per_device_train_batch_size=args.per_device_batch_size,
+        # Confirmed live (second real Colab run): training got through
+        # 4/12 steps fine at batch_size=1, then OOM'd during the
+        # end-of-epoch EVALUATION phase specifically (5.30 GiB alloc
+        # failure inside compute_loss's forward pass). Root cause,
+        # confirmed by constructing a real SFTConfig and inspecting its
+        # dataclass fields directly: per_device_eval_batch_size defaults
+        # to 8, independent of per_device_train_batch_size -- it was
+        # never set here, so eval silently ran at 8x the batch size
+        # training had already been cut down to. Same memory-scaling
+        # argument as the training-side fix applies here too (batch_size
+        # * seq_len * vocab_size), so it gets the same value.
+        per_device_eval_batch_size=args.per_device_batch_size,
         gradient_accumulation_steps=args.grad_accum_steps,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},

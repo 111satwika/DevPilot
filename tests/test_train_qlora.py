@@ -83,6 +83,40 @@ def test_run_train_fails_fast_on_empty_dataset_before_any_gpu_code(tmp_path, tok
         _run_train(args)
 
 
+def test_sft_config_eval_batch_size_matches_train_batch_size():
+    """Confirmed live (second real Colab run): training succeeded at
+    per_device_train_batch_size=1, then OOM'd during evaluation because
+    per_device_eval_batch_size was never set and defaulted to 8 (verified
+    directly against the real installed trl.SFTConfig's dataclass
+    fields). This builds the exact same SFTConfig shape _run_train does
+    and checks the two batch sizes actually agree, so a regression here
+    fails a CPU-only test instead of only showing up as a GPU OOM."""
+    trl = pytest.importorskip("trl")
+
+    per_device_batch_size = 1
+    training_args = trl.SFTConfig(
+        output_dir="out",
+        num_train_epochs=1,
+        learning_rate=2e-4,
+        lr_scheduler_type="cosine",
+        warmup_steps=1,
+        per_device_train_batch_size=per_device_batch_size,
+        per_device_eval_batch_size=per_device_batch_size,
+        gradient_accumulation_steps=16,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        bf16=False,
+        use_cpu=True,
+        logging_steps=10,
+        save_strategy="epoch",
+        eval_strategy="epoch",
+        report_to=[],
+        max_length=4096,
+    )
+
+    assert training_args.per_device_eval_batch_size == training_args.per_device_train_batch_size == per_device_batch_size
+
+
 class TestComputeWarmupSteps:
     def test_is_roughly_three_percent_of_total_steps(self):
         # 100 examples, batch 4 * grad_accum 4 = effective 16 -> 7 steps/epoch (ceil),
