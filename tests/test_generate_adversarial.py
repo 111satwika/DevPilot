@@ -69,3 +69,25 @@ async def test_system_prompt_is_the_real_one_by_default():
     examples = await generate_adversarial_examples()
     assert examples[0].system_prompt == SYSTEM_PROMPT
     assert examples[0].system_prompt != ""
+
+
+def test_read_only_refusal_templates_never_literally_match_positive_templates():
+    """Entry 54's real regression: READ_ONLY_REQUEST_TEMPLATES (refusal,
+    mode=ask) used to share exact request text with
+    generate_positive_examples.py's POSITIVE_TEMPLATES (tool_call,
+    mode=agent) for the same tool -- e.g. "what's in {filename}?" labeled
+    refusal in one generator and tool_call in the other. A real Colab
+    retrain on data containing that overlap produced a model that emitted
+    Plan/Ask-style refusal text even for mode=agent requests. This must
+    never silently come back."""
+    from ml.data.generate_adversarial import READ_ONLY_REQUEST_TEMPLATES
+    from ml.data.generate_positive_examples import POSITIVE_TEMPLATES
+
+    checked = 0
+    for tool_name, refusal_phrasings in READ_ONLY_REQUEST_TEMPLATES.items():
+        positive_phrasings = {p for p, _ in POSITIVE_TEMPLATES.get(tool_name, [])}
+        checked += 1
+        assert not (set(refusal_phrasings) & positive_phrasings), (
+            f"{tool_name}: refusal and tool_call templates share literal text"
+        )
+    assert checked >= 3  # sanity: read_file, git_log, list_tables all actually compared

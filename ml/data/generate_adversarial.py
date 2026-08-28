@@ -98,11 +98,44 @@ PLAN_EXCLUDED_ONLY_TEMPLATES: dict[str, list[str]] = {
 # A handful of requests mapping to plain READ-ONLY tools -- used only for
 # Ask mode (which excludes everything, mutating or not) so its refusal
 # examples aren't exclusively about mutations.
+#
+# Deliberately phrased DIFFERENTLY from ml/data/generate_positive_examples.py's
+# templates for these same three tools (read_file, git_log, list_tables) --
+# see Entry 54: the first version of this dict used the exact same request
+# text ("what's in {filename}?", "what tables are in the database?") that
+# generate_positive_examples.py ALSO uses, just under mode="agent" with a
+# tool_call completion instead of mode="ask" with a refusal. A real Colab
+# retrain confirmed the fine-tuned model then failed to disambiguate on
+# mode context alone -- it started emitting Plan/Ask-style refusal text
+# even for mode="agent" requests -- consistent with the small LoRA adapter
+# keying off the (duplicated) surface request text rather than the mode
+# line buried in the system prompt. `_verify_no_overlap_with_positive_templates()`
+# below guards this specific regression going forward.
 READ_ONLY_REQUEST_TEMPLATES: dict[str, list[str]] = {
-    "read_file": ["what's in {filename}?", "show me the contents of {filename}"],
-    "git_log": ["what are the last few commits?", "show me the recent git history"],
-    "list_tables": ["what tables are in the database?"],
+    "read_file": ["can you take a look inside {filename}?", "pull up {filename} for me"],
+    "git_log": ["has this repo had many commits lately?", "walk me through the commit history"],
+    "list_tables": ["what does the database look like structurally?"],
 }
+
+
+def _verify_no_overlap_with_positive_templates() -> None:
+    """Fails loudly if READ_ONLY_REQUEST_TEMPLATES (refusal, mode=ask) ever
+    again shares literal request text with generate_positive_examples.py's
+    POSITIVE_TEMPLATES (tool_call, mode=agent) for the same tool --
+    exactly the bug Entry 54 found and fixed by hand. Called from
+    generate_adversarial_examples(), same "fail loudly rather than
+    silently under-cover it" pattern as the GATED_TOOLS check below,
+    rather than as an import-time side effect."""
+    from ml.data.generate_positive_examples import POSITIVE_TEMPLATES
+
+    for tool_name, refusal_phrasings in READ_ONLY_REQUEST_TEMPLATES.items():
+        positive_phrasings = {p for p, _ in POSITIVE_TEMPLATES.get(tool_name, [])}
+        overlap = set(refusal_phrasings) & positive_phrasings
+        assert not overlap, (
+            f"READ_ONLY_REQUEST_TEMPLATES[{tool_name!r}] shares literal request "
+            f"text with POSITIVE_TEMPLATES[{tool_name!r}]: {overlap} -- this is "
+            f"the exact ambiguous-label bug Entry 54 fixed; use different phrasing."
+        )
 
 SLOT_VALUES = {
     "filename": ["notes.txt", "summary.md", "config.json", "output.log", "README_new.md"],
@@ -194,6 +227,7 @@ async def generate_adversarial_examples(system_prompt: str = SYSTEM_PROMPT) -> l
     # under-covering it.
     missing = GATED_TOOLS - set(MUTATING_REQUEST_TEMPLATES)
     assert not missing, f"GATED_TOOLS has no request template(s) for: {missing}"
+    _verify_no_overlap_with_positive_templates()
 
     rng = random.Random(RANDOM_SEED)
     all_tools = await _discover_tools()
