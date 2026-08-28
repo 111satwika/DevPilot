@@ -30,7 +30,9 @@ def main() -> None:  # pragma: no cover -- needs a real GPU, see module docstrin
     parser.add_argument("--max-new-tokens", type=int, default=256)
     args = parser.parse_args()
 
-    from ml.eval.predictors import _generate_raw, _load_adapter_model, parse_tool_call_blocks
+    import torch
+
+    from ml.eval.predictors import _build_prompt_messages, _load_adapter_model, parse_tool_call_blocks
 
     examples = [ex for ex in read_jsonl(args.examples) if ex["completion"]["type"] == "tool_call"]
     examples = examples[: args.limit]
@@ -42,14 +44,34 @@ def main() -> None:  # pragma: no cover -- needs a real GPU, see module docstrin
 
     for i, ex in enumerate(examples, 1):
         expected = ex["completion"]["tool_calls"][0]
-        generated_text = _generate_raw(tokenizer, model, ex, args.max_new_tokens)
-        parsed = parse_tool_call_blocks(generated_text)
+
+        messages = _build_prompt_messages(ex)
+        prompt_text = tokenizer.apply_chat_template(
+            messages, tools=ex.get("tools") or None, tokenize=False, add_generation_prompt=True
+        )
+        inputs = tokenizer(prompt_text, return_tensors="pt", add_special_tokens=False).to(model.device)
+        with torch.no_grad():
+            output_ids = model.generate(
+                **inputs, max_new_tokens=args.max_new_tokens, do_sample=False, pad_token_id=tokenizer.pad_token_id
+            )
+        new_token_ids = output_ids[0][inputs["input_ids"].shape[1] :].tolist()
+        # skip_special_tokens=True is what the real predictor decodes with
+        # (and what looked empty before) -- also show the special-tokens-
+        # kept version and the raw token count, so "generated literally
+        # nothing" and "generated only special tokens, invisibly stripped"
+        # can be told apart.
+        text_stripped = tokenizer.decode(new_token_ids, skip_special_tokens=True)
+        text_with_specials = tokenizer.decode(new_token_ids, skip_special_tokens=False)
+        parsed = parse_tool_call_blocks(text_stripped)
 
         print(f"\n=== [{i}/{len(examples)}] mode={ex['mode']} ===")
         print(f"request:  {ex['user_request']!r}")
         print(f"expected: {expected['name']}({expected['arguments']})")
         print(f"parsed predicted tool calls: {parsed}")
-        print(f"raw generated text:\n{generated_text!r}")
+        print(f"prompt token count: {inputs['input_ids'].shape[1]}")
+        print(f"new tokens generated: {len(new_token_ids)}  ids: {new_token_ids[:20]}")
+        print(f"raw generated text (skip_special_tokens=True):  {text_stripped!r}")
+        print(f"raw generated text (skip_special_tokens=False): {text_with_specials!r}")
 
 
 if __name__ == "__main__":
