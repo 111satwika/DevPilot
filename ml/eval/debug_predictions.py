@@ -41,7 +41,7 @@ def main() -> None:  # pragma: no cover -- needs a real GPU, see module docstrin
     parser.add_argument("--examples", type=Path, default=Path("ml/data/out/test.jsonl"))
     parser.add_argument("--type", choices=["tool_call", "refusal"], default="tool_call", dest="expected_type")
     parser.add_argument("--limit", type=int, default=3, help="how many expected_type examples to inspect")
-    parser.add_argument("--max-new-tokens", type=int, default=256)
+    parser.add_argument("--max-new-tokens", type=int, default=100)
     args = parser.parse_args()
 
     import torch

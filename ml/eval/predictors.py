@@ -72,7 +72,31 @@ def make_ollama_predictor(
     return predict
 
 
-_TOOL_CALL_BLOCK_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+_TOOL_CALL_TAG_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
+
+
+def _extract_first_json_object(text: str, start: int = 0) -> dict | None:
+    """Finds the first '{' at or after `start`, then its matching '}' via
+    brace counting (correct for a nested arguments dict, unlike a naive
+    non-greedy regex like `\\{.*?\\}`, which stops at the FIRST '}' it
+    sees and would truncate e.g. {"name": "x", "arguments": {"a": 1}} at
+    the inner brace). Returns the parsed dict, or None if no span
+    starting with '{' parses as valid JSON."""
+    idx = text.find("{", start)
+    while idx != -1:
+        depth = 0
+        for i in range(idx, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[idx : i + 1])
+                    except json.JSONDecodeError:
+                        break  # this '{' doesn't start valid JSON -- try the next one
+        idx = text.find("{", idx + 1)
+    return None
 
 
 def _load_adapter_model(base_model: str, adapter_path: str):  # pragma: no cover -- needs a real GPU
@@ -122,29 +146,60 @@ def _generate_raw(tokenizer, model, example: dict, max_new_tokens: int) -> str: 
 
 
 def parse_tool_call_blocks(generated_text: str) -> list[dict]:
-    """Parses <tool_call>{...}</tool_call> blocks out of raw generated
-    text -- the same Hermes-style format confirmed live against the real
-    tokenizer (see format_example.py's module docstring). Exposed at
-    module level (not nested in make_hf_adapter_predictor) so
+    """Parses tool calls out of raw generated text. Primary format:
+    Hermes-style <tool_call>{...}</tool_call> blocks -- the format
+    confirmed live against the real tokenizer (see format_example.py's
+    module docstring) and what the training data actually uses.
+
+    Confirmed live (Entry 58, real Kaggle adapter after the Entry 57
+    learning-rate/warmup fix): the model sometimes emits the exact
+    correct {"name": ..., "arguments": ...} JSON WITHOUT the <tool_call>
+    wrapper tags at all (e.g. '{"name": "git_log", "arguments": {"limit":
+    10}}' with no tags), which the tag-only parser silently discarded as
+    zero tool calls -- scoring a genuinely correct prediction as a total
+    miss. Falls back to the first bare JSON object with "name"/
+    "arguments" keys when no tagged block is found. Only the FIRST such
+    object is taken in the fallback case: this project's real design is
+    one tool call per turn (llm/agent.py's iterative loop), so a model
+    that repeats several (sometimes hallucinated) calls back-to-back --
+    also confirmed live in that same investigation -- is a distinct
+    generation-quality issue this parser should surface as "predicted the
+    wrong number of calls" (via exact_tool_match's own len(...) != 1
+    check on the tag-block path), not paper over by picking one of many.
+
+    Exposed at module level (not nested in make_hf_adapter_predictor) so
     debug_predictions.py can parse the same raw text it prints, with the
     real parsing logic, not a re-implementation of it."""
     calls = []
-    for match in _TOOL_CALL_BLOCK_RE.finditer(generated_text):
-        try:
-            parsed = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            continue
+    for match in _TOOL_CALL_TAG_RE.finditer(generated_text):
+        parsed = _extract_first_json_object(match.group(1))
         if isinstance(parsed, dict) and "name" in parsed and "arguments" in parsed:
             calls.append({"name": parsed["name"], "arguments": parsed["arguments"]})
-    return calls
+    if calls:
+        return calls
+
+    parsed = _extract_first_json_object(generated_text)
+    if isinstance(parsed, dict) and "name" in parsed and "arguments" in parsed:
+        return [{"name": parsed["name"], "arguments": parsed["arguments"]}]
+    return []
 
 
 def make_hf_adapter_predictor(
-    base_model: str, adapter_path: str, max_new_tokens: int = 256
+    base_model: str, adapter_path: str, max_new_tokens: int = 100
 ):  # pragma: no cover -- needs a real GPU, see module docstring
     """The fine-tuned model's predictor. See _load_adapter_model /
     _generate_raw / parse_tool_call_blocks above for the pieces this
-    composes."""
+    composes.
+
+    max_new_tokens default lowered 256 -> 100 (Entry 58): measured
+    directly against every real completion in this project's dataset
+    (train+test), the longest is 49 tokens, mean ~35 -- 100 is a
+    generous margin over any real completion while cutting off, much
+    earlier than before, the runaway repeated-tool-call generation a
+    real Kaggle adapter was confirmed to sometimes produce (multiple
+    back-to-back JSON objects, occasionally naming hallucinated tools,
+    running until max_new_tokens was hit without ever emitting an
+    end-of-turn token)."""
     tokenizer, model = _load_adapter_model(base_model, adapter_path)
 
     def predict(example: dict) -> list[dict]:
