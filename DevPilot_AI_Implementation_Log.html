@@ -6724,6 +6724,78 @@ if session is None:
   hypothesis holds — the exact test this rebalancing exists to run.</p>
 </div>
 
+<h2 id="entry-53">Entry 53 — Second Real Colab OOM, This Time During Evaluation</h2>
+<div class="entry-meta">2026-08-28 · User retried training on Entry 52's rebalanced dataset · Status: <span class="status-done">fixed and verified against the real installed trl; not yet re-confirmed on a real GPU</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Training made real progress this time before failing</strong>
+  — 4 of 12 planned steps completed successfully at the already-fixed
+  <code>per_device_train_batch_size=1</code> (Entry 49a's fix held), then
+  a fresh <code>torch.OutOfMemoryError</code> hit: <code>Tried to allocate
+  5.30 GiB. GPU 0 has a total capacity of 14.56 GiB of which 4.23 GiB is
+  free.</code> The traceback placed this inside
+  <code>_maybe_log_save_evaluate</code> → <code>self._evaluate(...)</code>
+  → <code>evaluation_loop</code> → <code>prediction_step</code> →
+  <code>compute_loss</code>'s forward pass — the end-of-epoch
+  <strong>evaluation</strong> phase specifically, not the training
+  backward pass that had already succeeded 4 times.</p>
+
+  <p><strong>Diagnosed, not guessed</strong> — the instinct to assume
+  "I already fixed the batch size" (Entry 49a) would have been wrong.
+  <code>per_device_eval_batch_size</code> is a completely separate
+  <code>SFTConfig</code> field with its own independent default, and the
+  first OOM fix never touched it. Confirmed directly in this CPU-only
+  environment by inspecting <code>dataclasses.fields(SFTConfig)</code>
+  against the real installed <code>trl==1.12.0</code>: default
+  <code>8</code>, same as <code>per_device_train_batch_size</code>'s
+  own <em>un-fixed</em> default — meaning evaluation had been silently
+  running at 8× the batch size training was already cut down to.</p>
+
+  <p><strong>Will do:</strong> pass <code>per_device_eval_batch_size</code>
+  explicitly, matching whatever the training batch size actually is, so
+  the two settings can never silently diverge again.<br>
+  <strong>Won't do:</strong> lower <code>per_device_train_batch_size</code>
+  any further — it's already at the minimum (1); the eval-side default
+  was the actual, isolated bug.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><code>ml/train/train_qlora.py</code>'s <code>SFTConfig(...)</code>
+  construction now includes
+  <code>per_device_eval_batch_size=args.per_device_batch_size</code>
+  alongside the existing <code>per_device_train_batch_size</code> —
+  same underlying memory-scaling argument as the original OOM fix
+  (Entry 49a) applies identically on the eval side: cost scales with
+  <code>batch_size × seq_len × vocab_size</code>, dominated by Qwen's
+  ~152k-token vocabulary's logits tensor, not model weights.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Verified by constructing the exact same <code>SFTConfig</code>
+  shape <code>_run_train</code> builds, directly against the real
+  installed <code>trl==1.12.0</code> (substituting <code>use_cpu=True</code>/
+  <code>bf16=False</code> for this GPU-less environment, since
+  <code>SFTConfig</code>'s own validation otherwise rejects
+  <code>bf16=True</code> without a GPU) — confirmed no construction error
+  and both batch-size fields agree. New
+  <code>tests/test_train_qlora.py::test_sft_config_eval_batch_size_matches_train_batch_size</code>
+  guards this specific mismatch going forward. Full suite: 145/145
+  passing.</p>
+
+  <p><strong>Next:</strong> the user retries training on Colab with this
+  fix pulled in; if it completes cleanly this time, re-run the eval
+  harness (Entry 50/51) against the new adapter and compare against both
+  the base model's and the previous (imbalanced-data) fine-tuned model's
+  numbers, to finally see whether Entry 51's class-imbalance hypothesis
+  holds.</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
