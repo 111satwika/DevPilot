@@ -160,6 +160,44 @@ def test_sft_config_falls_back_to_fp16_when_bf16_is_unsupported():
     assert training_args.bf16 == use_bf16
 
 
+def test_sft_config_uses_plain_nll_loss_not_the_buggy_chunked_default():
+    """Confirmed live (real Kaggle GPU run): trl==1.12.0 defaults
+    loss_type to "chunked_nll" whenever it isn't set explicitly, and that
+    path has a real bug for a PEFT LoRA + 4-bit-quantized + gradient-
+    checkpointed model -- AttributeError: 'functools.partial' object has
+    no attribute '__func__', inside trl's own
+    _patch_chunked_ce_lm_head (confirmed by reading that function's real
+    installed source directly). This constructs the exact SFTConfig
+    shape _run_train uses and checks loss_type is explicitly "nll", not
+    left to default -- a regression here would silently reintroduce the
+    same crash the next time SFTConfig is touched."""
+    trl = pytest.importorskip("trl")
+
+    training_args = trl.SFTConfig(
+        output_dir="out",
+        num_train_epochs=1,
+        learning_rate=2e-4,
+        lr_scheduler_type="cosine",
+        warmup_steps=1,
+        per_device_train_batch_size=1,
+        per_device_eval_batch_size=1,
+        gradient_accumulation_steps=16,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        bf16=False,
+        fp16=True,
+        use_cpu=True,
+        logging_steps=10,
+        save_strategy="epoch",
+        eval_strategy="epoch",
+        report_to=[],
+        max_length=4096,
+        loss_type="nll",
+    )
+
+    assert training_args.loss_type == "nll"
+
+
 class TestComputeWarmupSteps:
     def test_is_roughly_three_percent_of_total_steps(self):
         # 100 examples, batch 4 * grad_accum 4 = effective 16 -> 7 steps/epoch (ceil),

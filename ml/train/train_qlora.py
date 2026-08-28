@@ -250,6 +250,21 @@ def _run_train(args) -> None:  # pragma: no cover -- needs a real GPU + bitsandb
         # Colab than 1.12.0, re-check this same source path before
         # trusting it.
         max_length=args.max_seq_len,
+        # Confirmed live (real Kaggle GPU run): trl==1.12.0 defaults
+        # loss_type to "chunked_nll" (a memory-optimization that patches
+        # model.forward to compute cross-entropy in chunks, skipping the
+        # lm_head matmul on masked-out tokens) whenever it isn't set
+        # explicitly. That patch path has a real bug for this exact setup
+        # (PEFT LoRA + 4-bit-quantized + gradient-checkpointed base
+        # model): AttributeError: 'functools.partial' object has no
+        # attribute '__func__', raised inside
+        # trl.trainer.sft_trainer._patch_chunked_ce_lm_head when it reads
+        # inspect.signature(original_forward.__func__) -- confirmed by
+        # reading that function's real installed source directly, not
+        # guessed. loss_type="nll" (the plain, long-established loss)
+        # skips that patching entirely and is mathematically the same
+        # computation, just without the chunking memory optimization.
+        loss_type="nll",
     )
 
     collator = DataCollatorForSeq2Seq(tokenizer, padding=True, label_pad_token_id=-100)
