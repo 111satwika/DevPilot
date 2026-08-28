@@ -75,16 +75,11 @@ def make_ollama_predictor(
 _TOOL_CALL_BLOCK_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 
 
-def make_hf_adapter_predictor(
-    base_model: str, adapter_path: str, max_new_tokens: int = 256
-):  # pragma: no cover -- needs a real GPU, see module docstring
-    """The fine-tuned model's predictor. Loads the 4-bit base model plus
-    the trained LoRA adapter, generates a completion for each example
-    using the exact same chat-template format ml/train/format_example.py
-    trained on, and parses any <tool_call>{...}</tool_call> blocks out of
-    the generated text -- the same Hermes-style format confirmed live
-    against the real tokenizer (see format_example.py's module
-    docstring)."""
+def _load_adapter_model(base_model: str, adapter_path: str):  # pragma: no cover -- needs a real GPU
+    """Loads the 4-bit base model plus the trained LoRA adapter. Split out
+    of make_hf_adapter_predictor so ml/eval/debug_predictions.py can share
+    the exact same loading path when a MISS needs to be inspected by hand
+    (raw generated text, not just the parsed tool calls)."""
     import torch
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -104,28 +99,56 @@ def make_hf_adapter_predictor(
     )
     model = PeftModel.from_pretrained(model, adapter_path)
     model.eval()
+    return tokenizer, model
+
+
+def _generate_raw(tokenizer, model, example: dict, max_new_tokens: int) -> str:  # pragma: no cover -- needs a real GPU
+    """Runs the exact same chat-template format ml/train/format_example.py
+    trained on and returns the model's raw decoded completion, before any
+    <tool_call> parsing."""
+    import torch
+
+    messages = _build_prompt_messages(example)
+    prompt_text = tokenizer.apply_chat_template(
+        messages, tools=example.get("tools") or None, tokenize=False, add_generation_prompt=True
+    )
+    inputs = tokenizer(prompt_text, return_tensors="pt", add_special_tokens=False).to(model.device)
+
+    with torch.no_grad():
+        output_ids = model.generate(
+            **inputs, max_new_tokens=max_new_tokens, do_sample=False, pad_token_id=tokenizer.pad_token_id
+        )
+    return tokenizer.decode(output_ids[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+
+
+def parse_tool_call_blocks(generated_text: str) -> list[dict]:
+    """Parses <tool_call>{...}</tool_call> blocks out of raw generated
+    text -- the same Hermes-style format confirmed live against the real
+    tokenizer (see format_example.py's module docstring). Exposed at
+    module level (not nested in make_hf_adapter_predictor) so
+    debug_predictions.py can parse the same raw text it prints, with the
+    real parsing logic, not a re-implementation of it."""
+    calls = []
+    for match in _TOOL_CALL_BLOCK_RE.finditer(generated_text):
+        try:
+            parsed = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and "name" in parsed and "arguments" in parsed:
+            calls.append({"name": parsed["name"], "arguments": parsed["arguments"]})
+    return calls
+
+
+def make_hf_adapter_predictor(
+    base_model: str, adapter_path: str, max_new_tokens: int = 256
+):  # pragma: no cover -- needs a real GPU, see module docstring
+    """The fine-tuned model's predictor. See _load_adapter_model /
+    _generate_raw / parse_tool_call_blocks above for the pieces this
+    composes."""
+    tokenizer, model = _load_adapter_model(base_model, adapter_path)
 
     def predict(example: dict) -> list[dict]:
-        messages = _build_prompt_messages(example)
-        prompt_text = tokenizer.apply_chat_template(
-            messages, tools=example.get("tools") or None, tokenize=False, add_generation_prompt=True
-        )
-        inputs = tokenizer(prompt_text, return_tensors="pt", add_special_tokens=False).to(model.device)
-
-        with torch.no_grad():
-            output_ids = model.generate(
-                **inputs, max_new_tokens=max_new_tokens, do_sample=False, pad_token_id=tokenizer.pad_token_id
-            )
-        generated_text = tokenizer.decode(output_ids[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
-
-        calls = []
-        for match in _TOOL_CALL_BLOCK_RE.finditer(generated_text):
-            try:
-                parsed = json.loads(match.group(1))
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict) and "name" in parsed and "arguments" in parsed:
-                calls.append({"name": parsed["name"], "arguments": parsed["arguments"]})
-        return calls
+        generated_text = _generate_raw(tokenizer, model, example, max_new_tokens)
+        return parse_tool_call_blocks(generated_text)
 
     return predict
