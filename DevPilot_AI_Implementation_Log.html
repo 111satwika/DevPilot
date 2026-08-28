@@ -6796,6 +6796,104 @@ if session is None:
   holds.</p>
 </div>
 
+<h2 id="entry-54">Entry 54 — The Rebalancing Hypothesis, Refuted: a Real Duplicate-Text Bug</h2>
+<div class="entry-meta">2026-08-28 · Real Colab retrain on Entry 52's rebalanced dataset, real eval, then a real root-cause fix · Status: <span class="status-done">root cause fixed and guarded; not yet re-verified by a third real retrain</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Entry 53's OOM fix worked — training completed cleanly.</strong>
+  The real eval result on the rebalanced adapter, though, was worse on
+  the axis that mattered: on the larger 29-example test set (15 real
+  <code>tool_call</code>-expected examples this time, not 2),
+  <code>exact_tool_match_rate=0.0%</code> (0/15) and
+  <code>task_completion_rate</code> actually dropped, 88.9% → 48.3%.
+  Rebalancing the tool_call:refusal ratio from ~4.5:1 to ~1:1 did not fix
+  the regression — it's now clear that hypothesis (Entry 51/52) was
+  wrong, or at least not the primary cause.</p>
+
+  <p><strong>Diagnosed from raw model output, not another round of
+  aggregate metrics.</strong> The eval report only ever stored derived
+  booleans (<code>exact_match</code>, <code>schema_valid</code>, ...),
+  not what the model actually generated — enough to see THAT an example
+  missed, never WHY. A new diagnostic tool was needed before the next
+  hypothesis could be anything but a guess.</p>
+
+  <p><strong>Will do:</strong> refactor <code>predictors.py</code> to
+  expose its model-loading/generation pieces for reuse (not duplicate
+  that logic in a throwaway script); write a small
+  <code>debug_predictions.py</code> that prints raw generated text for a
+  handful of real MISS examples; trace whatever it finds back to the
+  actual training data, not stop at "the model refuses more now."<br>
+  <strong>Won't do:</strong> guess at a third hypothesis (more epochs,
+  different LoRA rank, etc.) before seeing what the model is actually
+  outputting.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><code>ml/eval/predictors.py</code> refactored: <code>_load_adapter_model()</code>,
+  <code>_generate_raw()</code>, and module-level <code>parse_tool_call_blocks()</code>
+  split out of <code>make_hf_adapter_predictor()</code> (which now just
+  composes them — no behavior change, existing Ollama-predictor tests
+  unaffected). New <code>ml/eval/debug_predictions.py</code> loads the
+  base model + trained adapter via the same shared path, generates for a
+  few real <code>tool_call</code>-expected test examples, and prints the
+  request, the expected call, the parsed predicted calls, AND the raw
+  decoded text before parsing.</p>
+
+  <p><strong>Run against the real Colab adapter, the raw text was
+  unambiguous</strong> — for a <code>mode=agent</code> request
+  ("open app.py and tell me what it does", expecting
+  <code>read_file(path="app.py")</code>), the model generated: <em>"I'm
+  in Plan mode right now, which means I don't have access to any files
+  or directories yet. Switch to Agent mode if you want me to actually
+  investigate this."</em> Not the literal training-data refusal string
+  (paraphrased, not memorized verbatim), but unmistakably the refusal
+  <em>shape</em> — on a request whose actual mode was <code>agent</code>,
+  where a tool call was correct.</p>
+
+  <p><strong>Root cause, found by reading the training data itself:</strong>
+  <code>generate_adversarial.py</code>'s <code>READ_ONLY_REQUEST_TEMPLATES</code>
+  (built refusal-labeled examples, mode=<code>ask</code>) and
+  <code>generate_positive_examples.py</code>'s <code>POSITIVE_TEMPLATES</code>
+  (built tool_call-labeled examples, mode=<code>agent</code>) used the
+  <strong>exact same literal request text</strong> for three tools:
+  <code>read_file</code> ("what's in {filename}?", "show me the contents
+  of {filename}"), <code>list_tables</code> ("what tables are in the
+  database?" — no slot-filling at all, a byte-identical duplicate). Only
+  the mode line buried in the system prompt distinguished the correct
+  answer; a small LoRA adapter on a 57-example dataset apparently
+  couldn't reliably key off that instead of the (duplicated) surface
+  text. Fixed by rephrasing <code>READ_ONLY_REQUEST_TEMPLATES</code> to
+  be lexically distinct from <code>POSITIVE_TEMPLATES</code> for all
+  three tools, plus a new
+  <code>_verify_no_overlap_with_positive_templates()</code> called from
+  <code>generate_adversarial_examples()</code> — same "fail loudly rather
+  than silently under-cover it" pattern this file already used for its
+  <code>GATED_TOOLS</code> coverage check.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>New
+  <code>tests/test_generate_adversarial.py::test_read_only_refusal_templates_never_literally_match_positive_templates</code>
+  guards this exact regression permanently. Dataset regenerated with the
+  fix: same 57 train / 29 test counts (only phrasing changed, not
+  volume) — re-verified against the real tokenizer via
+  <code>--dry-run</code>, 0 dropped at <code>max_seq_len=4096</code>
+  (longest sequence 3,894 tokens). Full suite: 146/146 passing.</p>
+
+  <p><strong>Not yet re-verified on a real GPU.</strong> Next step: the
+  user retrains on Colab with this fix pulled in, then re-runs the eval
+  harness on the same held-out set — this time testing whether removing
+  the actual root cause (duplicate contradictory training text) recovers
+  <code>exact_tool_match_rate</code>, rather than the ratio-only fix
+  Entry 52 tried.</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
