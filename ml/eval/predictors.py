@@ -47,7 +47,21 @@ def make_ollama_predictor(
     port: int = OLLAMA_PORT,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ):
-    """Real, runnable now -- direct HTTP call to a live Ollama instance."""
+    """Real, runnable now -- direct HTTP call to a live Ollama instance.
+
+    Confirmed live (Phase 4, real Ollama-served fine-tuned model): Ollama's
+    own tool-call extraction (its `message.tool_calls` field) only
+    recognizes the <tool_call>...</tool_call>-wrapped format its built-in
+    Go template instructs the model to produce -- it has no equivalent of
+    parse_tool_call_blocks()'s bare-JSON fallback (Entry 58). Our
+    fine-tuned model sometimes omits that wrapper even when the JSON
+    content itself is correct, so relying on Ollama's own extraction
+    alone would silently undercount correct predictions the exact same
+    way our own parser used to, before that fix -- and would make this
+    predictor inconsistent with make_hf_adapter_predictor's parsing, an
+    unfair asymmetry for a same-model comparison. Falls back to parsing
+    the raw `content` with the same lenient parser when Ollama's own
+    structured field comes back empty."""
 
     def predict(example: dict) -> list[dict]:
         messages = _build_prompt_messages(example)
@@ -64,10 +78,12 @@ def make_ollama_predictor(
         response.raise_for_status()
         message = response.json()["message"]
         tool_calls = message.get("tool_calls") or []
-        return [
-            {"name": c["function"]["name"], "arguments": c["function"]["arguments"]}
-            for c in tool_calls
-        ]
+        if tool_calls:
+            return [
+                {"name": c["function"]["name"], "arguments": c["function"]["arguments"]}
+                for c in tool_calls
+            ]
+        return parse_tool_call_blocks(message.get("content") or "")
 
     return predict
 

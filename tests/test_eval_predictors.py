@@ -84,6 +84,44 @@ def test_returns_empty_list_when_no_tool_calls(monkeypatch):
     assert predict(_example()) == []
 
 
+def test_falls_back_to_parsing_content_when_ollama_extracts_no_tool_calls(monkeypatch):
+    """Real Phase 4 finding: Ollama's own tool_calls extraction only
+    recognizes the <tool_call>-wrapped format its built-in template
+    instructs the model to use -- it has no equivalent of
+    parse_tool_call_blocks()'s bare-JSON fallback. A custom-imported
+    fine-tuned model that sometimes omits the wrapper (Entry 58) would
+    have correct predictions silently undercounted without this
+    fallback. Ollama's own field (empty here) must never populated, only
+    the raw content is what carries the real answer."""
+    import ml.eval.predictors as mod
+    fake_message = {
+        "role": "assistant",
+        "content": '{"name": "git_log", "arguments": {"limit": 10}}',
+        "tool_calls": None,
+    }
+    monkeypatch.setattr(mod.httpx2, "Client", lambda **kwargs: _FakeClient(_FakeResponse(fake_message), {}))
+
+    predict = make_ollama_predictor("devpilot-finetuned")
+    assert predict(_example()) == [{"name": "git_log", "arguments": {"limit": 10}}]
+
+
+def test_prefers_ollamas_own_tool_calls_when_present(monkeypatch):
+    """When Ollama DOES successfully extract structured tool_calls, that
+    should win over parsing content -- content is often empty/irrelevant
+    in that case anyway, and the structured field is the more reliable
+    signal when it's actually populated."""
+    import ml.eval.predictors as mod
+    fake_message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"function": {"name": "read_file", "arguments": {"path": "x.py"}}}],
+    }
+    monkeypatch.setattr(mod.httpx2, "Client", lambda **kwargs: _FakeClient(_FakeResponse(fake_message), {}))
+
+    predict = make_ollama_predictor("devpilot-finetuned")
+    assert predict(_example()) == [{"name": "read_file", "arguments": {"path": "x.py"}}]
+
+
 def test_sends_the_real_example_context_to_ollama(monkeypatch):
     captured = {}
     import ml.eval.predictors as mod
