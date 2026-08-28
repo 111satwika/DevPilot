@@ -56,6 +56,7 @@ def main() -> None:  # pragma: no cover -- needs a real GPU, see module docstrin
     print(f"Loading {args.base_model} + adapter {args.adapter} ...")
     tokenizer, model = _load_adapter_model(str(args.base_model), str(args.adapter))
 
+    empty_count = 0
     for i, ex in enumerate(examples, 1):
         if args.expected_type == "tool_call":
             expected_desc = ex["completion"]["tool_calls"][0]
@@ -82,7 +83,12 @@ def main() -> None:  # pragma: no cover -- needs a real GPU, see module docstrin
         text_with_specials = tokenizer.decode(new_token_ids, skip_special_tokens=False)
         parsed = parse_tool_call_blocks(text_stripped)
 
-        print(f"\n=== [{i}/{len(examples)}] mode={ex['mode']} expected_type={args.expected_type} ===")
+        is_immediate_eos = len(new_token_ids) == 1 and new_token_ids[0] == tokenizer.eos_token_id
+        if is_immediate_eos:
+            empty_count += 1
+
+        print(f"\n=== [{i}/{len(examples)}] mode={ex['mode']} expected_type={args.expected_type} "
+              f"{'EMPTY (immediate EOS)' if is_immediate_eos else 'generated real content'} ===")
         print(f"request:  {ex['user_request']!r}")
         print(f"expected: {expected_desc}")
         print(f"parsed predicted tool calls: {parsed}")
@@ -90,6 +96,11 @@ def main() -> None:  # pragma: no cover -- needs a real GPU, see module docstrin
         print(f"new tokens generated: {len(new_token_ids)}  ids: {new_token_ids[:20]}")
         print(f"raw generated text (skip_special_tokens=True):  {text_stripped!r}")
         print(f"raw generated text (skip_special_tokens=False): {text_with_specials!r}")
+
+    print(
+        f"\n=== SUMMARY: {empty_count}/{len(examples)} {args.expected_type}-expected examples "
+        f"generated an immediate EOS (empty output) ==="
+    )
 
 
 if __name__ == "__main__":
