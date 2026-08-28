@@ -7393,6 +7393,110 @@ if session is None:
   result than picking one and hiding the other.</p>
 </div>
 
+<h2 id="entry-61">Entry 61 — Phase 4: GGUF, Ollama, and the First Fair Comparison</h2>
+<div class="entry-meta">2026-08-29 · Local machine, no GPU needed for this phase · Status: <span class="status-done">real, fair comparison complete; runtime-transfer gap flagged as an open question</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Getting the adapter off Kaggle was its own saga</strong> —
+  `FileLink` 404'd repeatedly, the Output panel showed nothing after
+  Quick Save, `transfer.sh` was unreachable from Kaggle's network
+  entirely. Eventually retrieved via a full local extraction of a
+  downloaded zip. None of this touched the actual ML work, but it's
+  worth recording: getting a trained artifact OFF a free-tier cloud
+  notebook was, in practice, harder than any of the training bugs.</p>
+
+  <p><strong>Phase 4's actual goal</strong> — Concept #45 flagged the
+  earlier latency comparison (Ollama-CPU base model vs. Colab-GPU
+  fine-tuned model) as invalid: different hardware entirely. This phase
+  exists specifically to fix that — serve both models identically, on
+  the same machine, and only then compare.</p>
+
+  <p><strong>Will do:</strong> merge the adapter into the base model,
+  convert to GGUF, quantize, serve through Ollama with a correct
+  tool-call template, and pull the SAME-size un-fine-tuned base model
+  with the SAME serving configuration for the comparison.<br>
+  <strong>Won't do:</strong> trust a number from a new serving stack
+  without verifying the integration first — this project's whole
+  methodology exists specifically to catch exactly the kind of silent
+  parsing gap found here.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>New <code>ml/train/merge_adapter.py</code> — loads the base model in
+  fp16 (not the 4-bit form training used; merging into a quantized base
+  isn't meaningful), attaches the adapter, calls
+  <code>merge_and_unload()</code>, saves a standalone checkpoint. CPU-only,
+  a few seconds for a 1.5B model. llama.cpp's <code>convert_hf_to_gguf.py</code>
+  obtained via a downloaded zip archive after <code>git clone</code>
+  repeatedly failed with HTTP/2 stream errors on this network — isolated
+  in its own venv (its requirements pin specific `transformers`/`numpy`
+  versions that would have regressed the rest of this project's already-
+  verified environment). Quantized via a prebuilt Windows CPU
+  <code>llama-quantize.exe</code> (2944 MiB → 935 MiB at Q4_K_M) — avoided
+  needing a C++ build toolchain entirely.</p>
+
+  <p><strong>Two real integration bugs, found and fixed before trusting
+  any number</strong> (Concept #57): Ollama's own <code>message.tool_calls</code>
+  extraction only recognizes the exact <code>&lt;tool_call&gt;</code>-wrapped
+  format its built-in Go template instructs — confirmed live, a real
+  request generated the exact correct JSON and Ollama still returned
+  <code>tool_calls: null</code>. Fixed by mirroring Entry 58's fallback
+  directly in <code>make_ollama_predictor</code>: parse raw
+  <code>content</code> with the same lenient parser when Ollama's own
+  field comes back empty. Second: the Modelfile had no
+  <code>num_predict</code> cap, letting the exact same runaway-repetition
+  failure mode Entry 58 fixed for the HF-adapter path reappear here — a
+  real 600-second HTTP timeout mid-eval, confirmed by checking Ollama's
+  own process (still alive, actively burning CPU, just stuck generating).
+  Fixed by copying the same <code>num_predict 100</code> cap, verified
+  against real completion lengths, to both this model's Modelfile and an
+  identically-configured base-model variant.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Both fixes verified via direct manual API calls before re-running
+  the full eval. New tests in
+  <code>tests/test_eval_predictors.py</code> for the Ollama fallback,
+  using response shapes matching what was actually observed live, not
+  fabricated. Full suite: 159/159 passing.</p>
+
+  <table style="width:100%; border-collapse:collapse; margin:1em 0;">
+    <tr style="border-bottom:1px solid var(--border, #444);">
+      <th style="text-align:left; padding:6px 10px;">Metric</th>
+      <th style="text-align:left; padding:6px 10px;">Fine-tuned (Q4_K_M)</th>
+      <th style="text-align:left; padding:6px 10px;">Base 1.5B (Q4_K_M)</th>
+    </tr>
+    <tr><td style="padding:6px 10px;">exact_match</td><td style="padding:6px 10px;">66.7%</td><td style="padding:6px 10px;">59.3%</td></tr>
+    <tr><td style="padding:6px 10px;">schema_valid</td><td style="padding:6px 10px;">93.5%</td><td style="padding:6px 10px;">74.2%</td></tr>
+    <tr><td style="padding:6px 10px;">mean_argument_f1</td><td style="padding:6px 10px;">0.776</td><td style="padding:6px 10px;">0.702</td></tr>
+    <tr><td style="padding:6px 10px;">mode_violation</td><td style="padding:6px 10px;">50.0%</td><td style="padding:6px 10px;">50.0%</td></tr>
+    <tr><td style="padding:6px 10px;">task_completion</td><td style="padding:6px 10px;">64.5%</td><td style="padding:6px 10px;">58.1%</td></tr>
+    <tr><td style="padding:6px 10px;">p50 latency</td><td style="padding:6px 10px;">2.86s</td><td style="padding:6px 10px;">3.28s</td></tr>
+    <tr><td style="padding:6px 10px;">p95 latency</td><td style="padding:6px 10px;">8.99s</td><td style="padding:6px 10px;">7.26s</td></tr>
+  </table>
+
+  <p><strong>Reported honestly, not spun toward the flattering half:</strong>
+  the first genuinely fair, same-hardware comparison shows a real but
+  modest accuracy win from fine-tuning — different from both the 80%
+  and the 18.5% seen under the transformers/GPU evals, a third real data
+  point, not a contradiction. Mode-discipline is the more striking
+  finding: identical at 50% for both models, meaning the 0%-violation
+  result measured under transformers did NOT survive the quantize+GGUF+
+  Ollama-serving pipeline. Latency is a wash — faster p50, slower p95 —
+  not a clean win either direction. The runtime-transfer gap itself is
+  flagged as a real, current limitation, not yet root-caused (candidates:
+  Q4_K_M precision loss on the merged LoRA delta, or the hand-authored
+  Ollama Go-template being a close-but-not-exact match for the Jinja
+  chat template <code>format_example.py</code> actually trained
+  against).</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
