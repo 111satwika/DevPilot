@@ -64,15 +64,34 @@ def _load_tokenized_dataset(path: Path, tokenizer, max_seq_len: int):
     return records
 
 
-def _compute_warmup_steps(num_examples: int, per_device_batch_size: int, grad_accum_steps: int, epochs: int) -> int:
-    """3% warmup, expressed as steps -- SFTConfig (trl==1.12.0, verified
-    by constructing one directly) only accepts warmup_STEPS, not
-    warmup_ratio, so the step count has to be derived from dataset size
-    here instead."""
+def _compute_warmup_steps(
+    num_examples: int, per_device_batch_size: int, grad_accum_steps: int, epochs: int, warmup_ratio: float = 0.2
+) -> int:
+    """Warmup as a fraction of total steps, expressed as steps -- SFTConfig
+    (trl==1.12.0, verified by constructing one directly) only accepts
+    warmup_STEPS, not warmup_ratio, so the step count has to be derived
+    from dataset size here instead.
+
+    warmup_ratio default raised 0.03 -> 0.2 (Entry 57): a real Kaggle
+    training run (12 total steps for this project's real 57-example
+    dataset) had only 1 warmup step at 3% (round(12*0.03)=0, floored to
+    1), meaning the LR jumped straight to its full value on step 2 -- a
+    documented contributor to the premature-EOS collapse diagnosed in
+    that run (confirmed via debug_predictions.py: 14/15 tool_call and
+    3/14 refusal test examples generated a single immediate <|im_end|>
+    and nothing else, despite healthy-looking teacher-forced eval_loss/
+    eval_mean_token_accuracy). Every other real hypothesis for that
+    collapse (stale dataset, label misalignment, the loss_type="nll"
+    change, precision, eos/pad token collision) was directly ruled out
+    first -- see Concept #51. Verified directly: for this project's real
+    12-total-step schedule, 0.1 would round right back down to the same
+    1 step (round(12*0.1)=1) -- 0.2 is the smallest round-number ratio
+    that actually changes anything for a schedule this short
+    (round(12*0.2)=2)."""
     effective_batch_size = per_device_batch_size * grad_accum_steps
     steps_per_epoch = max(1, -(-num_examples // effective_batch_size))  # ceil div
     total_steps = steps_per_epoch * epochs
-    return max(1, round(total_steps * 0.03))
+    return max(1, round(total_steps * warmup_ratio))
 
 
 def _run_dry(args) -> None:
@@ -169,8 +188,9 @@ def _run_train(args) -> None:  # pragma: no cover -- needs a real GPU + bitsandb
         )
 
     warmup_steps = _compute_warmup_steps(
-        len(train_dataset), args.per_device_batch_size, args.grad_accum_steps, args.epochs
+        len(train_dataset), args.per_device_batch_size, args.grad_accum_steps, args.epochs, args.warmup_ratio
     )
+    print(f"learning_rate={args.learning_rate}  warmup_ratio={args.warmup_ratio}  warmup_steps={warmup_steps}")
 
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -211,7 +231,7 @@ def _run_train(args) -> None:  # pragma: no cover -- needs a real GPU + bitsandb
     training_args = SFTConfig(
         output_dir=str(args.output_dir),
         num_train_epochs=args.epochs,
-        learning_rate=2e-4,
+        learning_rate=args.learning_rate,
         lr_scheduler_type="cosine",
         warmup_steps=warmup_steps,
         per_device_train_batch_size=args.per_device_batch_size,
@@ -297,6 +317,15 @@ def main() -> None:
     # that scales with batch_size * seq_len * vocab_size by 4x.
     parser.add_argument("--per-device-batch-size", type=int, default=1, dest="per_device_batch_size")
     parser.add_argument("--grad-accum-steps", type=int, default=16, dest="grad_accum_steps")
+    # Defaults changed 2e-4 -> 1e-4 and warmup 3% -> 10% after a real
+    # Kaggle run trained to healthy-looking teacher-forced eval_loss/
+    # eval_mean_token_accuracy but collapsed at generation time to
+    # predicting immediate EOS on 14/15 tool_call and 3/14 refusal
+    # held-out examples -- see _compute_warmup_steps' docstring (Entry 57)
+    # for the full diagnostic trail that ruled out every other real
+    # hypothesis first.
+    parser.add_argument("--learning-rate", type=float, default=1e-4, dest="learning_rate")
+    parser.add_argument("--warmup-ratio", type=float, default=0.2, dest="warmup_ratio")
     parser.add_argument(
         "--dry-run", action="store_true",
         help="load + tokenize real data against the real tokenizer and report stats; skip model load and training entirely (no GPU needed)",

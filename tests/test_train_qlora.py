@@ -199,14 +199,14 @@ def test_sft_config_uses_plain_nll_loss_not_the_buggy_chunked_default():
 
 
 class TestComputeWarmupSteps:
-    def test_is_roughly_three_percent_of_total_steps(self):
+    def test_respects_an_explicit_warmup_ratio(self):
         # 100 examples, batch 4 * grad_accum 4 = effective 16 -> 7 steps/epoch (ceil),
         # 3 epochs -> 21 total steps -> 3% = 0.63 -> rounds to 1.
-        assert _compute_warmup_steps(100, 4, 4, 3) == 1
+        assert _compute_warmup_steps(100, 4, 4, 3, warmup_ratio=0.03) == 1
 
     def test_scales_up_for_larger_datasets(self):
         # 10,000 examples, effective batch 16 -> 625 steps/epoch, 3 epochs -> 1875 total -> 3% ~ 56.
-        assert _compute_warmup_steps(10_000, 4, 4, 3) == 56
+        assert _compute_warmup_steps(10_000, 4, 4, 3, warmup_ratio=0.03) == 56
 
     def test_never_returns_zero(self):
         assert _compute_warmup_steps(1, 4, 4, 1) >= 1
@@ -215,3 +215,21 @@ class TestComputeWarmupSteps:
         small_batch = _compute_warmup_steps(1000, 2, 2, 3)
         large_batch = _compute_warmup_steps(1000, 8, 8, 3)
         assert large_batch < small_batch
+
+    def test_default_warmup_ratio_is_twenty_percent_not_three(self):
+        """Entry 57: raised from 0.03 to 0.2 after a real Kaggle run's
+        tiny 12-total-step schedule got only 1 warmup step at 3% -- the
+        LR jumped to full value on step 2, a documented contributor to
+        the premature-EOS collapse that run's raw generated output
+        showed. 0.1 was tried first but verified to round right back
+        down to the same 1 step for this exact schedule length
+        (round(12*0.1)=1) -- 0.2 is the smallest round ratio that
+        actually changes anything here. This project's real dataset
+        shape (57 examples, batch_size=1, grad_accum=16, 3 epochs -> 12
+        total steps) is used directly so a regression back to a
+        too-low default fails this test with real numbers, not an
+        arbitrary example."""
+        assert _compute_warmup_steps(57, 1, 16, 3) == 2  # default ratio: round(12 * 0.2) = 2
+        assert _compute_warmup_steps(57, 1, 16, 3) != _compute_warmup_steps(57, 1, 16, 3, warmup_ratio=0.03)
+        # A larger, more realistic total-step count shows the raised default's real effect.
+        assert _compute_warmup_steps(1000, 4, 4, 3) == 38  # round(189 * 0.2) at default ratio
