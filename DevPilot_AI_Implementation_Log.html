@@ -7149,6 +7149,97 @@ if session is None:
   alone weren't enough to catch this failure mode.</p>
 </div>
 
+<h2 id="entry-58">Entry 58 — Parser Fix Reveals a Real Mode-Discipline Regression</h2>
+<div class="entry-meta">2026-08-28 · Same already-trained adapter, evaluated before and after only the parser changed · Status: <span class="status-done">real, honest, mixed result — capability win, mode-discipline regression, both fully verified</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Entry 57's fix worked completely</strong> — 0/15 and 0/14
+  immediate-EOS collapses, confirmed via `debug_predictions.py`'s tally.
+  But the eval harness's aggregate result was unchanged
+  (`exact_match=0.0%`) — itself suspicious enough to check raw output
+  again rather than accept it, given generation was now confirmed
+  working.</p>
+
+  <p><strong>Raw output showed two distinct, real problems</strong>, not
+  one: (1) the model often emits the exact correct <code>{"name":
+  "git_log", "arguments": {"limit": 10}}</code> JSON — genuinely
+  correct — but WITHOUT the <code>&lt;tool_call&gt;</code> wrapper tags
+  the parser strictly required, silently scoring it as zero tool calls;
+  (2) some examples produce runaway repeated tool calls (occasionally
+  hallucinating tool names like <code>list_files</code> that don't exist
+  in DevPilot's real tool set) instead of stopping after one, running to
+  the 256-token generation cap.</p>
+
+  <p><strong>Both fixable without another GPU run</strong> — purely
+  parsing/decoding logic, not anything about the trained weights
+  themselves. Will do: make the parser accept bare JSON as a fallback
+  (one call only, matching this project's one-tool-call-per-turn
+  design); replace the fragile non-greedy regex with a real brace-
+  counting extractor (the old one truncates at the first closing brace,
+  silently corrupting any NESTED arguments value); lower
+  <code>max_new_tokens</code>, measured against real data rather than
+  guessed.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p><code>ml/eval/predictors.py</code>: new
+  <code>_extract_first_json_object()</code> scans for a <code>{</code>
+  and finds its matching <code>}</code> via brace counting, correct for
+  nested objects (unlike <code>\{.*?\}</code>, which a real example
+  proved wrong: <code>{"name": "x", "arguments": {"a": 1}}</code> would
+  truncate at the FIRST <code>}</code>). <code>parse_tool_call_blocks()</code>
+  tries <code>&lt;tool_call&gt;</code>-tagged blocks first (unchanged
+  priority), then falls back to the first bare JSON object with
+  <code>name</code>/<code>arguments</code> keys — deliberately only ONE
+  call in that fallback path, since a model repeating several is a
+  distinct generation-quality issue, not something to paper over as
+  multiple valid calls. <code>max_new_tokens</code> default lowered
+  256 → 100, measured directly against every real completion in the
+  full dataset (train+test): longest is 49 tokens, mean ~35 — 100 is
+  generous headroom while cutting repetition off far earlier.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>6 new tests in
+  <code>tests/test_eval_predictors.py::TestParseToolCallBlocks</code>,
+  using the EXACT raw text a real Kaggle adapter produced — not
+  fabricated examples — including a dedicated regression test for the
+  nested-arguments truncation the old regex had. Full suite: 156/156
+  passing.</p>
+
+  <p><strong>Re-running the SAME already-trained adapter</strong> (no
+  retraining — only the parser/decoding fix) flipped the result
+  completely: <code>exact_match</code> 0% → <strong>80.0%</strong>,
+  <code>arg_f1</code> n/a → <strong>0.714</strong> — a real, substantial
+  capability win, finally a trustworthy number for the core thing this
+  fine-tune set out to build. Against that: <code>mode_violation</code>
+  0% → <strong>85.7%</strong>. Checked directly, not inferred: every one
+  of 12 <code>mode=plan</code> refusal-expected examples called a real,
+  semantically-matching tool (<code>write_file</code>,
+  <code>git_push</code>, <code>build_image</code>,
+  <code>stop_container</code>, ...), while both <code>mode=ask</code>
+  examples (which offer zero tools at all) still correctly refused. The
+  earlier "0% mode violation" across every prior fine-tune attempt in
+  this project was never a real result — it was the old parser's
+  blindness to unwrapped JSON hiding this the entire time.</p>
+
+  <p><strong>This is not a bug to keep chasing</strong> — it's a real
+  finding about how the training data is shaped: Plan mode's refusal
+  examples all come from mutating/gated-tool templates, meaning every
+  one of them ALSO has an unambiguous, semantically-obvious matching
+  tool — exactly the pattern the now much-stronger tool-matching skill
+  was trained to exploit, with nothing in the data forcing the model to
+  weigh the system prompt's mode restriction against it. Reported
+  honestly, both the win and the regression, as the project's current
+  real state before deciding next steps.</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
