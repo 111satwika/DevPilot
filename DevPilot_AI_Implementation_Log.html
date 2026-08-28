@@ -6630,6 +6630,100 @@ if session is None:
   models quantized and served identically) first.</p>
 </div>
 
+<h2 id="entry-52">Entry 52 — Rebalancing the Training Data to Test Entry 51's Hypothesis</h2>
+<div class="entry-meta">2026-08-28 · User's choice, given three options: rebalance and retrain, wanting defensible resume numbers · Status: <span class="status-done">dataset rebalanced and verified; retraining is the next real step</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Given three options for what to do about Entry 51's mixed
+  result, the user chose to test the hypothesis directly</strong> rather
+  than report the finding as-is or move to Phase 4 first — stated reason:
+  wants defensible resume numbers, not just an honest narrative. Of the
+  three, rebalancing is the only one that can turn "found a tradeoff"
+  into "found and fixed a tradeoff," a stronger result either way it
+  lands: the numbers improve (hypothesis confirmed) or they don't
+  (hypothesis ruled out, worth knowing either way).</p>
+
+  <p><strong>Fixed with a new template generator, not the teacher-
+  distillation script</strong> — no OpenAI/Anthropic API key exists in
+  this environment, so <code>generate_teacher_traces.py</code> (Entry 47)
+  can't actually run here. <code>generate_positive_examples.py</code>
+  uses the exact same no-API-key, hand-written-template approach
+  <code>generate_adversarial.py</code> already proved, applied to
+  <code>tool_call</code>-type examples this time, across 21 different
+  real tools — not just more <code>list_directory</code> repeats, since a
+  fix scoped to "more of the one tool the model already knew" wouldn't
+  address the tool-diversity problem underneath the class-imbalance
+  one.</p>
+
+  <p><strong>Will do:</strong> generate realistic, correctly-labeled
+  tool_call examples across every read-only tool with a sensible request
+  shape; wire the new source into <code>build_dataset.py</code>'s default
+  list; re-verify the rebalanced dataset against the real tokenizer
+  before calling it done.<br>
+  <strong>Won't do:</strong> block on an API key nobody has supplied —
+  the teacher-distillation script stays available for later, this fix
+  doesn't need it.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>New <code>ml/data/generate_positive_examples.py</code>: 35 examples
+  across 21 tools (<code>read_file</code>, <code>list_directory</code>,
+  <code>git_status</code>/<code>git_log</code>/<code>git_diff</code>,
+  <code>list_tables</code>/<code>describe_table</code>, GitHub's
+  <code>get_repository</code>/<code>list_pull_requests</code>/etc.,
+  Docker's read-only tools, <code>search_web</code>/<code>fetch_page</code>,
+  ...), argument shapes taken directly from each tool's real signature.
+  Wired into <code>build_dataset.py</code>'s default source list,
+  alongside <code>real_traces.jsonl</code>/<code>adversarial.jsonl</code>/
+  <code>teacher_traces.jsonl</code>.</p>
+
+  <p><strong>A real bug caught before it ever produced a row of training
+  data</strong> — the first draft picked slot values for the request
+  TEXT and for the tool-call ARGUMENTS via two independent
+  <code>rng.choice()</code> calls on the same <code>random.Random</code>
+  instance. Nothing forced the two draws to agree: a request could say
+  "what's in config.py?" while the labeled correct tool call named a
+  completely different file. Surfaced immediately as a bare
+  <code>KeyError: 'owner'</code> on the very first real run (two GitHub
+  templates referenced slot names — <code>owner</code>/<code>repo</code> —
+  that hadn't been defined as fill values at all yet), which forced a
+  proper fix rather than a quick patch: a new <code>_draw_slots()</code>
+  draws one consistent set of values once per example, and both the
+  request text and the tool-call arguments are built from that same
+  dict — they can't diverge by construction anymore.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>7 new tests in <code>tests/test_generate_positive_examples.py</code>,
+  including one that directly asserts every request's mentioned value
+  (filename, table, container, owner+repo, ...) appears verbatim in its
+  own labeled tool call — the exact property the text/argument-mismatch
+  bug violated, now permanently guarded so this specific class of bug
+  can't come back silently.</p>
+
+  <p>Regenerated the full dataset for real:
+  <code>train.jsonl</code> 33 → 57 examples, <code>test.jsonl</code> 18 →
+  29. Class balance measured directly, not assumed:
+  <code>tool_call:refusal</code> in the training set went from roughly
+  6:27 (~4.5:1, all tool_call examples being <code>list_directory</code>)
+  to 28:29 (~1:1, spread across 21 tools). Re-verified against the real
+  tokenizer via <code>--dry-run</code>: all 57+29 examples still tokenize
+  correctly with 0 dropped at <code>max_seq_len=4096</code> (longest
+  sequence now 3,894 tokens, still comfortably under the limit). Full
+  suite: 144/144 passing.</p>
+
+  <p><strong>Next:</strong> retrain on this rebalanced dataset (same
+  Colab flow as Entry 49) and re-run the eval harness (Entry 50/51) on
+  the same held-out set, to see directly whether the class-imbalance
+  hypothesis holds — the exact test this rebalancing exists to run.</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),

@@ -77,6 +77,13 @@ def main() -> None:
         default=[
             Path("ml/data/out/real_traces.jsonl"),
             Path("ml/data/out/adversarial.jsonl"),
+            # Entry 51's fix: the dataset's only tool_call examples used
+            # to come entirely from adversarial.jsonl's explore-first
+            # bucket (all list_directory) -- this generator adds 35 more,
+            # across 21 different tools, to correct the ~4.5:1 class
+            # imbalance implicated in the fine-tuned model's
+            # exact_tool_match regression.
+            Path("ml/data/out/positive.jsonl"),
             Path("ml/data/out/teacher_traces.jsonl"),
         ],
     )
