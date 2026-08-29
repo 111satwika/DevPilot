@@ -7497,6 +7497,48 @@ if session is None:
   against).</p>
 </div>
 
+<h2 id="entry-62">Entry 62 — The Real Denominator Behind Entry 61's Headline Number</h2>
+<div class="entry-meta">2026-08-29 · Prompted by a direct question, not found unprompted · Status: <span class="status-done">documented as a permanent caveat on Entry 61's result</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>Asked directly: how many examples actually back the 66.7% vs
+  59.3% number, and what if it's small?</strong> Entry 61's summary line
+  said "n=31 both" — true for the overall eval run, but not necessarily
+  true for the SPECIFIC metric being compared. `exact_tool_match_rate`
+  (Concept #42's own rate-denominator design, from much earlier in this
+  project) is deliberately computed only over the subset of examples
+  where it's meaningful — the `tool_call`-expected ones, not the
+  refusal-expected ones mixed into the same 31-example set.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>Queried the real saved report files directly —
+  <code>ml/eval/out/finetuned_ollama_report.json</code> and
+  <code>base1.5b_ollama_report.json</code>'s own <code>per_example</code>
+  field — rather than re-deriving the answer from memory or assumption.
+  Real counts: 27 of the 31 examples are <code>tool_call</code>-expected
+  (the other 4 are refusals, scored separately). Fine-tuned: <strong>18/27</strong>
+  correct. Base: <strong>16/27</strong> correct.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>The entire reported 7.4-point gap between 66.7% and 59.3% is
+  exactly <strong>2 examples</strong>. At n=27, flipping either model's
+  result on a single example moves the percentage by ~3.7 points — more
+  than half the gap this result claims. Not a fabricated number — both
+  counts are real and independently verifiable in the saved reports —
+  but a genuinely fragile one. No code changed; this is a permanent
+  caveat on an already-reported result, documented so it can't be cited
+  again — on a resume or anywhere else — without its real n=27
+  denominator and 2-example margin attached.</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
