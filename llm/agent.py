@@ -143,10 +143,10 @@ Entry 41 (gap-fix, 2026-08-23): two additions.
 import asyncio
 import json
 import re
-import subprocess
 import sys
 from dataclasses import dataclass, field
 
+import httpx2
 import mcp.types as types
 from mcp import Client, ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -161,7 +161,18 @@ from mcp_servers.github.server import mcp as github_mcp
 from mcp_servers.terminal.server import mcp as terminal_mcp
 from mcp_servers.workspace import forwarded_env
 
-OLLAMA_CONTAINER = "githubcodebaseintelligenceplatform-ollama-1"
+# Entry 44: this used to resolve a Docker container's IP through a WSL
+# `docker inspect` bridge (OLLAMA_CONTAINER, _resolve_ollama_host below,
+# both removed) -- a deployment topology this environment doesn't
+# actually have. Confirmed directly, repeatedly: Ollama runs as a native
+# Windows install, reachable at 127.0.0.1 with no WSL/Docker bridge at
+# all -- the same address ml/eval/predictors.py's make_ollama_predictor
+# has been using successfully via direct HTTP this entire project. This
+# was a real bug in the primary application path (untouched by this
+# project's own test suite, which only ever monkeypatches _ollama_chat
+# wholesale) -- found via portfolio review, not by anyone running the
+# app and hitting it.
+OLLAMA_HOST = "127.0.0.1"
 OLLAMA_PORT = 11434
 OLLAMA_MODEL = "qwen2.5:7b-instruct"
 # Entry 34: confirmed via Ollama's own /api/ps ("size_vram": 0) and a
@@ -379,67 +390,43 @@ class AgentSession:
     turns: list[dict] = field(default_factory=list)
 
 
-def _resolve_ollama_host() -> str:
-    """Same pattern as llm/client.py -- resolve fresh, never hardcode."""
-    result = subprocess.run(
-        [
-            "wsl", "-d", "Ubuntu", "-e", "docker", "inspect", "-f",
-            "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
-            OLLAMA_CONTAINER,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    ip = result.stdout.strip()
-    if not ip:
-        raise ConnectionError(f"Could not resolve an IP for container '{OLLAMA_CONTAINER}'.")
-    return ip
-
-
 async def check_ollama_reachable(timeout: float = 3.0) -> str:
-    """Best-effort reachability check for GET /status -- resolves the
-    Ollama container's IP only (no actual chat call), capped at `timeout`
-    so a slow/unreachable WSL setup can't make /status itself hang. Never
-    raises -- always returns a short human-readable status string.
-    Deliberately NOT part of GET /health, which the VS Code extension
-    polls every 500ms expecting a near-instant reply (Entry 27); a
-    multi-second WSL subprocess call there would break that polling loop."""
+    """Best-effort reachability check for GET /status -- hits Ollama's own
+    lightweight GET /api/tags (no chat call), capped at `timeout` so a
+    slow/unreachable Ollama can't make /status itself hang. Never raises
+    -- always returns a short human-readable status string. Deliberately
+    NOT part of GET /health, which the VS Code extension polls every
+    500ms expecting a near-instant reply (Entry 27)."""
     try:
-        host = await asyncio.wait_for(asyncio.to_thread(_resolve_ollama_host), timeout=timeout)
-        return f"ok ({host})"
+        async with httpx2.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/tags")
+        response.raise_for_status()
+        return f"ok ({OLLAMA_HOST})"
     except Exception as exc:  # noqa: BLE001 -- this is a status probe, any failure means "unreachable"
         return f"unreachable: {exc}"
 
 
 def _ollama_chat(messages: list[dict], tools: list[dict]) -> dict:
-    host = _resolve_ollama_host()
-    url = f"http://{host}:{OLLAMA_PORT}/api/chat"
-    payload = json.dumps(
-        {
-            "model": OLLAMA_MODEL,
-            "messages": messages,
-            "tools": tools,
-            "stream": False,
-            "options": {"num_ctx": OLLAMA_CONTEXT_LENGTH},
-        }
-    )
+    """Direct HTTP call to the local Ollama install -- see Entry 44 above
+    for why this replaced a WSL-bridged subprocess call. Synchronous
+    (blocking) on purpose; the one caller runs it via asyncio.to_thread."""
+    try:
+        with httpx2.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+            response = client.post(
+                f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/chat",
+                json={
+                    "model": OLLAMA_MODEL,
+                    "messages": messages,
+                    "tools": tools,
+                    "stream": False,
+                    "options": {"num_ctx": OLLAMA_CONTEXT_LENGTH},
+                },
+            )
+        response.raise_for_status()
+    except httpx2.HTTPError as exc:
+        raise ConnectionError(f"Could not reach Ollama at {OLLAMA_HOST}:{OLLAMA_PORT}: {exc}") from exc
 
-    result = subprocess.run(
-        [
-            "wsl", "-d", "Ubuntu", "-e", "curl", "-s", "-X", "POST", url,
-            "-H", "Content-Type: application/json", "-d", "@-",
-        ],
-        input=payload,
-        capture_output=True,
-        text=True,
-        timeout=REQUEST_TIMEOUT_SECONDS,
-    )
-
-    if result.returncode != 0:
-        raise ConnectionError(f"curl failed: {result.stderr.strip()}")
-
-    data = json.loads(result.stdout)
+    data = response.json()
     if "error" in data:
         raise RuntimeError(f"Ollama error: {data['error']}")
 
@@ -762,11 +749,11 @@ async def ask(
 
     for iteration in range(1, MAX_ITERATIONS + 1):
         print(f"\n--- Turn {iteration}: asking the model (can take ~1 min on this hardware) ---")
-        # _ollama_chat is a blocking call (subprocess.run) -- run it off
-        # the event loop (Entry 30) so the server stays responsive to
-        # every other request (health checks, other sessions' polling)
-        # for the full duration of a slow model turn, instead of freezing
-        # the whole single-threaded asyncio loop.
+        # _ollama_chat is a blocking call (httpx2.Client, synchronous) --
+        # run it off the event loop (Entry 30) so the server stays
+        # responsive to every other request (health checks, other
+        # sessions' polling) for the full duration of a slow model turn,
+        # instead of freezing the whole single-threaded asyncio loop.
         message = await asyncio.to_thread(_ollama_chat, messages, tools)
 
         tool_calls = message.get("tool_calls")
