@@ -7539,6 +7539,65 @@ if session is None:
   denominator and 2-example margin attached.</p>
 </div>
 
+<h2 id="entry-63">Entry 63 — A Real Bug Found by Portfolio Review, Not by Running the App</h2>
+<div class="entry-meta">2026-08-29 · Found during an external README/portfolio review · Status: <span class="status-done">fixed and verified live against the real running Ollama instance</span></div>
+
+<div class="approach">
+  <span class="tag">Approach</span>
+
+  <p><strong>A reviewer flagged something this project's own test suite
+  never caught</strong>: <code>llm/agent.py</code>'s <code>_ollama_chat</code>
+  bridged every real model call through
+  <code>wsl -d Ubuntu -e curl ...</code>, against a Docker container IP
+  resolved via <code>wsl -d Ubuntu -e docker inspect ...</code> — a
+  deployment topology (Ollama running inside a WSL-hosted Docker
+  container) this environment doesn't actually have. Confirmed
+  repeatedly throughout this project's own ML evaluation work: Ollama
+  runs as a native Windows install, reachable directly at
+  <code>127.0.0.1:11434</code>, no WSL or Docker bridge involved at all.</p>
+
+  <p><strong>Why this project's own tests never caught it</strong>:
+  <code>tests/test_planner.py</code> monkeypatches <code>_ollama_chat</code>
+  wholesale to test the planner's control flow — nothing in the test
+  suite ever exercises the actual transport underneath it. A hiring
+  manager cloning the repo and running the app would have hit this
+  immediately; nothing in CI or `pytest` would have caught it first.</p>
+</div>
+
+<div class="implementation">
+  <span class="tag">Implementation</span>
+
+  <p>Replaced both <code>_resolve_ollama_host()</code> (WSL
+  <code>docker inspect</code>) and <code>_ollama_chat()</code>'s subprocess
+  bridge with direct <code>httpx2</code> calls to
+  <code>127.0.0.1:11434</code> — the exact pattern
+  <code>ml/eval/predictors.py</code>'s <code>make_ollama_predictor</code>
+  has used successfully throughout this entire project's ML evaluation
+  work. <code>check_ollama_reachable()</code> (used by <code>GET /status</code>)
+  now hits Ollama's own lightweight <code>GET /api/tags</code> instead of
+  resolving a container IP through a subprocess call.</p>
+</div>
+
+<div class="test">
+  <span class="tag">Outcome</span>
+
+  <p>Verified live, not just import-checked: both
+  <code>check_ollama_reachable()</code> and <code>_ollama_chat()</code>
+  called directly against the real running Ollama instance, returning
+  <code>"ok (127.0.0.1)"</code> and a real model response respectively.
+  Full suite: 159/159 passing, unaffected (as expected, given the
+  monkeypatch-based test design described above).</p>
+
+  <p><strong>Also corrected, in the same pass</strong>: a real
+  inaccuracy in this log's own Concept #55, caught by the same
+  reviewer — <code>GATED_TOOLS</code> has 8 members, not 9;
+  <code>git_create_branch</code> is ungated but separately excluded from
+  Plan mode, a different enforcement mechanism entirely. Corrected as a
+  new, dated Concept #59 appended to the Markdown log, not a silent
+  edit to the original entry — same convention this project already
+  used once before (Entry 12's correction to Entry 4).</p>
+</div>
+
 <footer>
   DevPilot AI — Local AI Engineering Copilot. Companion files:
   <code>DevPilot_AI_MCP_Project_Design.md</code> (plan),
