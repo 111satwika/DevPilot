@@ -1,12 +1,12 @@
-"""Combines every data source (real traces, adversarial, teacher-
-generated) into a final train/test split -- deliberately NOT a random
-per-example split.
+"""Combines every data source (real traces, adversarial, template-
+generated positive examples) into a final train/test split --
+deliberately NOT a random per-example split.
 
 Two things a random split would get wrong for this dataset specifically:
 
-1. Template-generated examples (generate_adversarial.py, and to a lesser
-   extent generate_teacher_traces.py) produce near-duplicate phrasings
-   for the same tool right next to each other. A random split can put
+1. Template-generated examples (generate_adversarial.py,
+   generate_positive_examples.py) produce near-duplicate phrasings for
+   the same tool right next to each other. A random split can put
    near-identical examples on both sides of the train/test boundary,
    which inflates test accuracy without the model having learned
    anything general -- the exact failure mode the spec's own methodology
@@ -84,7 +84,6 @@ def main() -> None:
             # imbalance implicated in the fine-tuned model's
             # exact_tool_match regression.
             Path("ml/data/out/positive.jsonl"),
-            Path("ml/data/out/teacher_traces.jsonl"),
         ],
     )
     parser.add_argument("--train-out", type=Path, default=Path("ml/data/out/train.jsonl"))

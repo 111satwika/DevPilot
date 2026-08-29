@@ -9,11 +9,10 @@ this imbalance taught it "refuse when in doubt" at the cost of actual
 tool-calling proficiency.
 
 Same no-API-key, hand-written-template + slot-filling approach already
-proven in generate_adversarial.py, deliberately NOT the teacher-
-distillation script -- this fixes the class-imbalance hypothesis
-directly and immediately, without depending on an API key nobody has
-supplied. (generate_teacher_traces.py still exists for whoever wants to
-add real natural-language variety and volume on top of this later.)
+proven in generate_adversarial.py, deliberately not a teacher-
+distillation approach (generating training data via a larger model's
+API) -- this fixes the class-imbalance hypothesis directly and
+immediately, without depending on an API key nobody has supplied.
 
 Argument shapes are taken directly from each tool's real signature
 (mcp_servers/*/server.py), not guessed -- a wrong argument key here would
